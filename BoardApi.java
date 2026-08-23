@@ -22,10 +22,25 @@ public final class BoardApi {
 
     private static final Pattern JSON_FIELD = Pattern.compile(
             "\"(\\w+)\"\\s*:\\s*(\"(?:\\\\.|[^\"\\\\])*\"|null|true|false|-?\\d+(?:\\.\\d+)?)");
-    private static final Path UPLOAD_DIR = Path.of("uploads");
+    private static final Path UPLOAD_DIR = resolveUploadDir();
     private static final int MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
 
     private BoardApi() {
+    }
+
+    private static Path resolveUploadDir() {
+        String env = System.getenv("UPLOAD_DIR");
+        if (env != null && !env.isBlank()) {
+            return Path.of(env).toAbsolutePath().normalize();
+        }
+        Path dir = Path.of("").toAbsolutePath().normalize();
+        for (int i = 0; i < 6 && dir != null; i++) {
+            if (Files.isRegularFile(dir.resolve("db.properties"))) {
+                return dir.resolve("uploads").normalize();
+            }
+            dir = dir.getParent();
+        }
+        return Path.of("uploads").toAbsolutePath().normalize();
     }
 
     public static void handleLogin(HttpExchange ex) throws IOException {
@@ -83,13 +98,75 @@ public final class BoardApi {
                 json(ex, 405, error("GET or POST only"));
                 return;
             }
-            Map<String, String> body = parseJson(readBody(ex));
-            Map<String, String> user = BoardDb.updateProfileImage(
-                    body.getOrDefault("memberId", ""),
-                    body.getOrDefault("profileImage", ""));
+            // data URL은 커서 크므로 정규식 파서 사용 금지
+            String rawBody = readBody(ex);
+            String memberId = extractJsonString(rawBody, "memberId");
+            String profileImage = extractJsonString(rawBody, "profileImage");
+            if (memberId == null) {
+                memberId = "";
+            }
+            if (profileImage == null) {
+                profileImage = "";
+            }
+            Map<String, String> user = BoardDb.updateProfileImage(memberId, profileImage);
             json(ex, 200, userJson(user));
         } catch (IllegalArgumentException e) {
             json(ex, 400, error(e.getMessage()));
+        } catch (Exception e) {
+            json(ex, 500, error(e.getMessage()));
+        }
+    }
+
+    /** DB에 넣은 data URL 프로필 사진을 바이너리로 내려줌 */
+    public static void handleProfilePhoto(HttpExchange ex) throws IOException {
+        if (!"GET".equalsIgnoreCase(ex.getRequestMethod())
+                && !"HEAD".equalsIgnoreCase(ex.getRequestMethod())) {
+            json(ex, 405, error("GET only"));
+            return;
+        }
+        try {
+            String memberId = query(ex.getRequestURI()).getOrDefault("memberId", "");
+            String raw = BoardDb.getRawProfileImage(memberId);
+            if (raw.isBlank()) {
+                respondBytes(ex, 404, "text/plain; charset=utf-8", "Not Found".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            if (raw.startsWith("/uploads/")) {
+                ex.getResponseHeaders().set("Location", raw);
+                ex.sendResponseHeaders(302, -1);
+                ex.close();
+                return;
+            }
+            if (!raw.startsWith("data:image/")) {
+                respondBytes(ex, 404, "text/plain; charset=utf-8", "Not Found".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            int comma = raw.indexOf(',');
+            if (comma < 0) {
+                respondBytes(ex, 404, "text/plain; charset=utf-8", "Not Found".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            String meta = raw.substring(5, comma); // image/jpeg;base64
+            String b64 = raw.substring(comma + 1);
+            byte[] bytes = Base64.getDecoder().decode(b64);
+            String ct = "image/jpeg";
+            int semi = meta.indexOf(';');
+            if (semi > 0) {
+                ct = meta.substring(0, semi);
+            } else if (!meta.isBlank()) {
+                ct = meta;
+            }
+            if ("HEAD".equalsIgnoreCase(ex.getRequestMethod())) {
+                ex.getResponseHeaders().set("Content-Type", ct);
+                ex.getResponseHeaders().set("Cache-Control", "private, max-age=3600");
+                ex.sendResponseHeaders(200, -1);
+                ex.close();
+                return;
+            }
+            ex.getResponseHeaders().set("Cache-Control", "private, max-age=3600");
+            respondBytes(ex, 200, ct, bytes);
+        } catch (IllegalArgumentException e) {
+            respondBytes(ex, 404, "text/plain; charset=utf-8", "Not Found".getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             json(ex, 500, error(e.getMessage()));
         }

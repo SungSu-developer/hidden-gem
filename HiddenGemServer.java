@@ -125,6 +125,7 @@ public class HiddenGemServer {
         server.createContext("/api/login", BoardApi::handleLogin);
         server.createContext("/api/register", BoardApi::handleRegister);
         server.createContext("/api/profile", BoardApi::handleProfile);
+        server.createContext("/api/profile/photo", BoardApi::handleProfilePhoto);
         server.createContext("/api/translate", BoardApi::handleTranslate);
         server.createContext("/api/upload", BoardApi::handleUpload);
         server.createContext("/uploads", BoardApi::handleUploads);

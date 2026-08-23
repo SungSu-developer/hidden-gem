@@ -61,12 +61,17 @@ public final class BoardDb {
                 }
             }
             try (Statement st = conn.createStatement()) {
-                st.executeUpdate("ALTER TABLE Member ADD COLUMN profile_image VARCHAR(500)");
+                st.executeUpdate("ALTER TABLE Member ADD COLUMN profile_image MEDIUMTEXT");
             } catch (SQLException e) {
                 String msg = e.getMessage() == null ? "" : e.getMessage().toLowerCase();
                 if (!(e.getErrorCode() == 1060 || msg.contains("duplicate"))) {
                     System.err.println("Member.profile_image 확인: " + e.getMessage());
                 }
+            }
+            try (Statement st = conn.createStatement()) {
+                st.executeUpdate("ALTER TABLE Member MODIFY COLUMN profile_image MEDIUMTEXT");
+            } catch (SQLException e) {
+                System.err.println("Member.profile_image 확장: " + e.getMessage());
             }
             schemaReady = true;
         }
@@ -146,8 +151,13 @@ public final class BoardDb {
             throw new IllegalArgumentException("로그인이 필요합니다.");
         }
         String url = profileImage == null ? "" : profileImage.trim();
-        if (!url.isEmpty() && !url.startsWith("/uploads/")) {
+        if (!url.isEmpty()
+                && !url.startsWith("/uploads/")
+                && !url.startsWith("data:image/")) {
             throw new IllegalArgumentException("잘못된 이미지 경로입니다.");
+        }
+        if (url.startsWith("data:image/") && url.length() > 900_000) {
+            throw new IllegalArgumentException("이미지가 너무 큽니다. 더 작은 사진으로 올려 주세요.");
         }
         try (Connection conn = open();
              PreparedStatement ps = conn.prepareStatement(
@@ -161,11 +171,45 @@ public final class BoardDb {
         return getMember(memberId);
     }
 
+    /** DB에 저장된 원본 (data URL 또는 /uploads/…). 공개 JSON에는 {@link #toPublicProfileImage} 사용. */
+    public static String getRawProfileImage(String memberId) throws Exception {
+        if (memberId == null || memberId.isBlank()) {
+            return "";
+        }
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT profile_image FROM Member WHERE member_id = ?")) {
+            ps.setString(1, memberId.trim());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return "";
+                }
+                return nullToEmpty(rs.getString("profile_image"));
+            }
+        }
+    }
+
+    /** 클라이언트용 URL — data URL은 엔드포인트로 치환해 목록 JSON이 비대해지지 않게 함 */
+    public static String toPublicProfileImage(String memberId, String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        if (raw.startsWith("/uploads/")) {
+            return raw;
+        }
+        if (raw.startsWith("data:image/") && memberId != null && !memberId.isBlank()) {
+            return "/api/profile/photo?memberId="
+                    + java.net.URLEncoder.encode(memberId.trim(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        return "";
+    }
+
     private static Map<String, String> memberRow(ResultSet rs) throws SQLException {
         Map<String, String> out = new LinkedHashMap<>();
-        out.put("memberId", rs.getString("member_id"));
+        String memberId = rs.getString("member_id");
+        out.put("memberId", memberId);
         out.put("nickname", nullToEmpty(rs.getString("nickname")));
-        out.put("profileImage", nullToEmpty(rs.getString("profile_image")));
+        out.put("profileImage", toPublicProfileImage(memberId, rs.getString("profile_image")));
         return out;
     }
 
@@ -562,9 +606,10 @@ public final class BoardDb {
     private static Map<String, Object> postRow(ResultSet rs) throws SQLException {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("postId", rs.getLong("post_id"));
-        row.put("memberId", rs.getString("member_id"));
+        String memberId = rs.getString("member_id");
+        row.put("memberId", memberId);
         row.put("nickname", nullToEmpty(rs.getString("nickname")));
-        row.put("profileImage", nullToEmpty(rs.getString("profile_image")));
+        row.put("profileImage", toPublicProfileImage(memberId, rs.getString("profile_image")));
         row.put("content", nullToEmpty(rs.getString("content")));
         row.put("category", normalizeCategory(rs.getString("category")));
         row.put("regDate", formatRegDate(rs, "reg_date"));

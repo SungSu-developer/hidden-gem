@@ -55,11 +55,11 @@ let uiLang = localStorage.getItem(LANG_STORAGE_KEY) === "en" ? "en" : "ko";
 const UI_I18N = {
   ko: {
     tabAi: "AI 추천",
-    tabDomestic: "내국인",
-    tabForeign: "외국인",
-    tabMy: "마이",
+    tabDomestic: "내국인 추천",
+    tabForeign: "외국인 추천",
+    tabMy: "마이페이지",
     needLogin: "로그인이 필요합니다",
-    loginJoin: "로그인 / 가입",
+    loginJoin: "로그인",
     logout: "로그아웃",
     write: "글쓰기",
     region: "지역",
@@ -76,11 +76,11 @@ const UI_I18N = {
   },
   en: {
     tabAi: "AI Picks",
-    tabDomestic: "Locals",
-    tabForeign: "Visitors",
-    tabMy: "My",
+    tabDomestic: "Local Tips",
+    tabForeign: "Visitor Tips",
+    tabMy: "My Page",
     needLogin: "Sign in required",
-    loginJoin: "Sign in / Join",
+    loginJoin: "Sign in",
     logout: "Log out",
     write: "Write",
     region: "Region",
@@ -213,6 +213,11 @@ let authMode = "login";
 let currentGems = [];
 /** AI 탭: 검색 전 풀 목록 (API 재호출 없이 명칭 필터) */
 let aiGemsPool = [];
+/** 지역별 AI 결과 메모리 캐시 (ym|sido → gems) */
+const aiGemsByKey = new Map();
+/** 지역별 진행 중 로드 */
+const aiLoadPromises = new Map();
+const AI_SESSION_CACHE_KEY = "hiddengem_ai_cache_v2";
 /** @type {Array<object>} */
 let boardPosts = [];
 /** @type {object|null} */
@@ -334,6 +339,12 @@ function fillAvatar(el, url, name) {
   const letter = String(name || "?").charAt(0);
   if (url) {
     el.innerHTML = `<img src="${escapeHtml(url)}" alt="">`;
+    const img = el.querySelector("img");
+    if (img) {
+      img.onerror = () => {
+        el.textContent = letter;
+      };
+    }
   } else {
     el.textContent = letter;
   }
@@ -542,92 +553,191 @@ async function prefetchPlaceDetails(gems) {
   await Promise.all(Array.from({ length: n }, () => worker()));
 }
 
-async function loadHiddenGems() {
-  showStatus(statusEl, uiLang === "en" ? "Loading AI picks…" : "AI 추천 목록을 불러오는 중…", "info");
-  resultsEl.innerHTML = "";
-  placeDetailCache.clear();
-  placeDetailInflight.clear();
+function aiCacheKey(sido) {
+  return `${DEFAULT_YM}|${sido || ""}`;
+}
 
-  // 사진·상세 없는 곳을 걸러내므로 후보를 넉넉히 가져온 뒤 통과분만 표시
-  const params = new URLSearchParams({ ym: DEFAULT_YM, limit: "100" });
-  const sido = sidoSelect?.value || "";
-  if (sido) params.set("sido", sido);
-
+function readAiSessionStore() {
   try {
-    const res = await fetch(`/api/hidden-gems?${params}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "조회 실패");
+    const raw = sessionStorage.getItem(AI_SESSION_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    // v1 단일 키 형식 마이그레이션
+    if (typeof parsed.key === "string" && Array.isArray(parsed.gems)) {
+      return { [parsed.key]: parsed.gems };
+    }
+    return parsed;
+  } catch {
+    return {};
+  }
+}
 
-    let gems = data.gems || [];
-    if (!gems.length) {
-      currentGems = [];
-      aiGemsPool = [];
-      hideStatus(statusEl);
-      resultsEl.innerHTML = "";
-      const li = document.createElement("li");
-      li.className = "empty-state";
-      li.textContent = sido
-        ? uiLang === "en"
-          ? "No recommendations for this region."
-          : "이 지역에 해당하는 추천 장소가 없습니다."
-        : uiLang === "en"
-          ? "No recommendations."
-          : "추천 장소가 없습니다.";
-      resultsEl.appendChild(li);
+function readAiSessionCache(key) {
+  const all = readAiSessionStore();
+  if (!Object.prototype.hasOwnProperty.call(all, key)) return null;
+  return Array.isArray(all[key]) ? all[key] : null;
+}
+
+function writeAiSessionCache(key, gems) {
+  try {
+    const all = readAiSessionStore();
+    all[key] = gems;
+    sessionStorage.setItem(AI_SESSION_CACHE_KEY, JSON.stringify(all));
+  } catch {
+    /* quota 등 무시 */
+  }
+}
+
+function showAiEmpty(sido, searchEmpty) {
+  resultsEl.innerHTML = "";
+  const li = document.createElement("li");
+  li.className = "empty-state";
+  if (searchEmpty) {
+    li.textContent = "검색 결과가 없습니다.";
+  } else if (!aiGemsPool.length) {
+    li.textContent = sido
+      ? uiLang === "en"
+        ? "No recommendations for this region."
+        : "이 지역에 해당하는 추천 장소가 없습니다."
+      : uiLang === "en"
+        ? "No recommendations."
+        : "추천 장소가 없습니다.";
+  } else {
+    li.textContent =
+      uiLang === "en"
+        ? "No places with both photo and details were found."
+        : "사진과 상세 정보가 모두 있는 추천 장소가 없습니다.";
+  }
+  resultsEl.appendChild(li);
+}
+
+function applyCachedAiGems(gems) {
+  aiGemsPool = gems.slice();
+  applyGemSearchFilter();
+  hideStatus(statusEl);
+  renderGems(currentGems);
+  if (!currentGems.length) {
+    const q = document.getElementById("gemSearch")?.value?.trim();
+    showAiEmpty(sidoSelect?.value || "", !!q);
+  }
+}
+
+/** @param {{ force?: boolean }} [options] */
+async function loadHiddenGems(options = {}) {
+  const force = !!options.force;
+  const sido = sidoSelect?.value || "";
+  const key = aiCacheKey(sido);
+
+  // 지역별로 따로 캐시 — 전국 ↔ 도/시 왕복해도 재계산 없음
+  if (!force && aiGemsByKey.has(key)) {
+    applyCachedAiGems(aiGemsByKey.get(key));
+    return;
+  }
+
+  if (!force) {
+    const cached = readAiSessionCache(key);
+    if (cached) {
+      aiGemsByKey.set(key, cached.slice());
+      applyCachedAiGems(cached);
+      if (cached.length) prefetchPlaceDetails(cached).catch(() => {});
       return;
     }
+  }
 
+  if (aiLoadPromises.has(key)) return aiLoadPromises.get(key);
+
+  const loadPromise = (async () => {
     showStatus(
       statusEl,
-      uiLang === "en" ? "Loading AI picks" : "AI 계산중",
+      uiLang === "en" ? "Loading AI picks…" : "AI 추천 목록을 불러오는 중…",
       "info"
     );
-    await loadThumbnails(gems);
-    await prefetchPlaceDetails(gems);
+    resultsEl.innerHTML = "";
 
-    const showLimit = Number(DEFAULT_LIMIT) || 30;
-    const enriched = gems.filter((g) => {
-      if (!g.thumbnail) return false;
-      const detail = placeDetailCache.get(gemKey(g));
-      return !!(detail && detail.found === true);
-    });
+    const params = new URLSearchParams({ ym: DEFAULT_YM, limit: "100" });
+    if (sido) params.set("sido", sido);
 
-    if (enriched.length) {
-      gems = enriched.length > showLimit ? enriched.slice(0, showLimit) : enriched;
-    } else if (gems.length) {
-      gems = gems.length > showLimit ? gems.slice(0, showLimit) : gems;
-    } else {
-      gems = [];
-    }
+    try {
+      const res = await fetch(`/api/hidden-gems?${params}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "조회 실패");
 
-    currentGems = gems;
-    aiGemsPool = gems.slice();
-    applyGemSearchFilter();
-    if (uiLang === "en" && currentGems.length) {
-      showStatus(statusEl, t("translating"), "info");
-      try {
-        await translateCurrentGems();
-      } catch (err) {
-        console.warn(err);
+      let gems = data.gems || [];
+      if (!gems.length) {
+        currentGems = [];
+        aiGemsPool = [];
+        aiGemsByKey.set(key, []);
+        writeAiSessionCache(key, []);
+        hideStatus(statusEl);
+        showAiEmpty(sido, false);
+        return;
+      }
+
+      const needWork =
+        gems.some((g) => !g.thumbnail) ||
+        gems.some((g) => !placeDetailCache.has(gemKey(g)));
+      if (needWork) {
+        showStatus(
+          statusEl,
+          uiLang === "en" ? "Loading AI picks" : "AI 계산중",
+          "info"
+        );
+      }
+      await loadThumbnails(gems);
+      await prefetchPlaceDetails(gems);
+
+      // 로딩 중에 다른 지역으로 바뀌었으면 화면은 건드리지 않고 캐시만 저장
+      const stillCurrent = aiCacheKey(sidoSelect?.value || "") === key;
+
+      const showLimit = Number(DEFAULT_LIMIT) || 30;
+      const enriched = gems.filter((g) => {
+        if (!g.thumbnail) return false;
+        const detail = placeDetailCache.get(gemKey(g));
+        return !!(detail && detail.found === true);
+      });
+
+      if (enriched.length) {
+        gems = enriched.length > showLimit ? enriched.slice(0, showLimit) : enriched;
+      } else if (gems.length) {
+        gems = gems.length > showLimit ? gems.slice(0, showLimit) : gems;
+      } else {
+        gems = [];
+      }
+
+      aiGemsByKey.set(key, gems.slice());
+      writeAiSessionCache(key, gems);
+
+      if (!stillCurrent) return;
+
+      currentGems = gems;
+      aiGemsPool = gems.slice();
+      applyGemSearchFilter();
+      if (uiLang === "en" && currentGems.length) {
+        showStatus(statusEl, t("translating"), "info");
+        try {
+          await translateCurrentGems();
+        } catch (err) {
+          console.warn(err);
+        }
+      }
+      hideStatus(statusEl);
+      renderGems(currentGems);
+      if (!currentGems.length) {
+        const q = document.getElementById("gemSearch")?.value?.trim();
+        showAiEmpty(sido, !!q);
+      }
+    } catch (e) {
+      if (aiCacheKey(sidoSelect?.value || "") === key) {
+        showStatus(statusEl, e.message || "오류가 발생했습니다.", "error");
       }
     }
-    hideStatus(statusEl);
-    renderGems(currentGems);
-    if (!currentGems.length) {
-      resultsEl.innerHTML = "";
-      const li = document.createElement("li");
-      li.className = "empty-state";
-      const q = document.getElementById("gemSearch")?.value?.trim();
-      li.textContent = q
-        ? "검색 결과가 없습니다."
-        : uiLang === "en"
-          ? "No places with both photo and details were found."
-          : "사진과 상세 정보가 모두 있는 추천 장소가 없습니다.";
-      resultsEl.appendChild(li);
-    }
-  } catch (e) {
-    showStatus(statusEl, e.message || "오류가 발생했습니다.", "error");
-  }
+  })().finally(() => {
+    aiLoadPromises.delete(key);
+  });
+
+  aiLoadPromises.set(key, loadPromise);
+  return loadPromise;
 }
 
 async function loadRegions() {
@@ -892,7 +1002,6 @@ function renderPlaceDetail(gem, data) {
   const overview =
     uiLang === "en" && data.overviewEn ? data.overviewEn : data.overview || "";
   const showMore = overview.length > 220;
-  const telRaw = String(data.tel || "").split(/[,\n]/)[0].trim();
   const addr =
     uiLang === "en" && data.addrEn ? data.addrEn : data.addr || "";
 
@@ -937,10 +1046,9 @@ function renderPlaceDetail(gem, data) {
             : `<p class="nearby-empty">${uiLang === "en" ? "No visitor info." : "이용 정보가 없습니다."}</p>`
         }
         ${
-          data.homepage || data.tel
+          data.homepage
             ? `<div class="place-links" style="margin-top:0.7rem">
-                ${data.homepage ? `<a class="place-link" href="${escapeHtml(data.homepage)}" target="_blank" rel="noopener">${uiLang === "en" ? "Website" : "홈페이지"}</a>` : ""}
-                ${data.tel ? `<a class="place-link" href="tel:${escapeHtml(telRaw)}">${uiLang === "en" ? "Call" : "전화"}</a>` : ""}
+                <a class="place-link" href="${escapeHtml(data.homepage)}" target="_blank" rel="noopener">${uiLang === "en" ? "Website" : "홈페이지"}</a>
               </div>`
             : ""
         }
@@ -1420,7 +1528,18 @@ function odsayPathTime(path) {
   );
 }
 
-function odsayPathPay(path) {
+function odsayPathHasLongHaul(path) {
+  return odsayAllSubPaths(path).some(odsayIsLongHaul);
+}
+
+/** 시내 구간만 (KTX·시외는 ODsay 요금이 부정확해서 제외) */
+function odsayCityPayment(path) {
+  if (odsayPathHasLongHaul(path)) {
+    return (
+      (Number(path._firstMile?.info?.payment) || 0) +
+      (Number(path._lastMile?.info?.payment) || 0)
+    );
+  }
   return (
     (Number(path.info?.payment) || 0) +
     (Number(path._firstMile?.info?.payment) || 0) +
@@ -1428,14 +1547,27 @@ function odsayPathPay(path) {
   );
 }
 
+/** 경로 탭/요약 — 시간은 항상, 금액은 시내만 있을 때만 */
 function odsayPathHeadline(path) {
   if (path._incomplete) return "";
   const time = odsayPathTime(path);
-  const pay = odsayPathPay(path);
-  const parts = [];
-  if (time) parts.push(`${time}분`);
-  if (pay) parts.push(`${pay.toLocaleString("ko-KR")}원`);
-  return parts.join(" · ");
+  if (!time) return "";
+  if (odsayPathHasLongHaul(path)) return `${time}분`;
+  const pay = odsayCityPayment(path);
+  return pay ? `${time}분 · ${pay.toLocaleString("ko-KR")}원` : `${time}분`;
+}
+
+function odsayPathFareNote(path) {
+  if (!odsayPathHasLongHaul(path)) return "";
+  const city = odsayCityPayment(path);
+  if (city) {
+    return uiLang === "en"
+      ? `Local transit ~${city.toLocaleString("ko-KR")}₩ · train/coach sold separately`
+      : `시내 약 ${city.toLocaleString("ko-KR")}원 · KTX·시외는 별도 예매`;
+  }
+  return uiLang === "en"
+    ? "Train and coach tickets sold separately"
+    : "KTX·시외 요금은 별도 예매";
 }
 
 function odsayWalkHtml(sp) {
@@ -1481,8 +1613,10 @@ function odsayLegHtml(sp) {
 
 function odsayPathCard(path, idx, hidden) {
   const legs = odsayAllSubPaths(path).map(odsayLegHtml).filter(Boolean).join("");
+  const note = odsayPathFareNote(path);
   return `<article class="transit-path" data-idx="${idx}"${hidden ? " hidden" : ""}>
     <ol class="transit-timeline">${legs}</ol>
+    ${note ? `<p class="transit-fare-note">${escapeHtml(note)}</p>` : ""}
   </article>`;
 }
 
@@ -1626,7 +1760,7 @@ function threadCardHtml(p, { showCategory = false } = {}) {
     ? `<span class="thread-cat">${escapeHtml(categoryLabel(p.category))}</span>`
     : "";
   const avatarInner = p.profileImage
-    ? `<img src="${escapeHtml(p.profileImage)}" alt="">`
+    ? `<img src="${escapeHtml(p.profileImage)}" alt="" data-letter="${escapeHtml(letter)}" onerror="this.parentNode.textContent=this.dataset.letter">`
     : escapeHtml(letter);
   const on = p.recommended ? "on" : "";
   return `
@@ -2046,6 +2180,13 @@ function switchTab(tabId) {
     loadBoardPosts(tabId);
   } else if (tabId === "my") {
     loadMyPage();
+  } else if (tabId === "ai") {
+    const key = aiCacheKey(sidoSelect?.value || "");
+    if (aiGemsByKey.has(key)) {
+      applyCachedAiGems(aiGemsByKey.get(key));
+    } else {
+      loadHiddenGems();
+    }
   }
 }
 
@@ -2093,7 +2234,7 @@ function openWriteForEdit(post) {
 }
 
 /** 선택한 이미지를 JPEG data URL로 리사이즈 (업로드 용량 절약) */
-function fileToCompressedDataUrl(file) {
+function fileToCompressedDataUrl(file, maxSide = 960, quality = 0.72) {
   return new Promise((resolve, reject) => {
     if (!file || !file.type.startsWith("image/")) {
       reject(new Error("이미지 파일만 올릴 수 있습니다."));
@@ -2105,7 +2246,6 @@ function fileToCompressedDataUrl(file) {
       const img = new Image();
       img.onerror = () => reject(new Error("이미지를 열지 못했습니다."));
       img.onload = () => {
-        const maxSide = 960;
         let { width, height } = img;
         if (width > maxSide || height > maxSide) {
           const scale = maxSide / Math.max(width, height);
@@ -2117,7 +2257,7 @@ function fileToCompressedDataUrl(file) {
         canvas.height = height;
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", 0.72));
+        resolve(canvas.toDataURL("image/jpeg", quality));
       };
       img.src = reader.result;
     };
@@ -2217,9 +2357,9 @@ document.getElementById("myAvatarInput")?.addEventListener("change", async (e) =
   input.value = "";
   if (!file || !currentUser) return;
   try {
-    const dataUrl = await fileToCompressedDataUrl(file);
-    const url = await uploadImageDataUrl(dataUrl);
-    await saveProfileImage(url);
+    // 파일 디스크가 아닌 DB에 저장 → 나갔다 와도 / 서버 달라도 유지
+    const dataUrl = await fileToCompressedDataUrl(file, 384, 0.7);
+    await saveProfileImage(dataUrl);
   } catch (err) {
     alert(err.message || "프로필 사진을 올리지 못했습니다.");
   }
@@ -2539,4 +2679,11 @@ if (currentUser?.memberId) {
 }
 syncLangButtons();
 applyChromeI18n();
+{
+  const authModeParam = new URLSearchParams(location.search).get("auth");
+  if (authModeParam === "register" || authModeParam === "login") {
+    openAuthDialog(authModeParam);
+    history.replaceState({}, "", location.pathname);
+  }
+}
 loadRegions().then(() => loadHiddenGems());
