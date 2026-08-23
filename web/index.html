@@ -3,217 +3,259 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>히든젬 — 관광지 추천</title>
+  <title>hiddentravel — 숨겨진 진짜 한국</title>
+  <meta name="description" content="외국인이 먼저 찾은 한국의 숨은 명소부터, 로컬만 아는 비밀 장소까지.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/landing.css">
 </head>
 <body>
-  <div class="app">
-    <header class="top-bar">
-      <nav class="tabs" role="tablist">
-        <button type="button" class="tab active" data-tab="ai" role="tab" aria-selected="true">AI 추천</button>
-        <button type="button" class="tab" data-tab="domestic" role="tab" aria-selected="false">내국인</button>
-        <button type="button" class="tab" data-tab="foreign" role="tab" aria-selected="false">외국인</button>
-        <button type="button" class="tab" data-tab="my" role="tab" aria-selected="false">마이</button>
-      </nav>
-      <div class="auth-bar">
-        <div class="lang-toggle" role="group" aria-label="Language">
-          <button type="button" class="lang-btn active" data-lang="ko" id="langKo">KO</button>
-          <button type="button" class="lang-btn" data-lang="en" id="langEn">EN</button>
-        </div>
-        <span id="authLabel" class="auth-label">로그인이 필요합니다</span>
-        <button type="button" id="authOpenBtn" class="auth-btn">로그인 / 가입</button>
-        <button type="button" id="logoutBtn" class="auth-btn" hidden>로그아웃</button>
+  <div class="landing">
+    <header class="ld-header">
+      <a class="ld-logo" href="/">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
+          <circle cx="12" cy="12" r="9" stroke="#F9E000" stroke-width="2"/>
+          <path d="M3 12h18M12 3c2.5 2.8 3.8 5.8 3.8 9s-1.3 6.2-3.8 9c-2.5-2.8-3.8-5.8-3.8-9S9.5 5.8 12 3z" stroke="#F9E000" stroke-width="2"/>
+        </svg>
+        <span>hiddentravel</span>
+      </a>
+      <div class="ld-lang" role="group" aria-label="Language">
+        <button type="button" class="active" data-lang="ko">KO</button>
+        <button type="button" data-lang="en">EN</button>
       </div>
     </header>
 
-    <!-- AI 추천 패널 -->
-    <section id="panel-ai" class="panel active" role="tabpanel">
-      <div class="panel-toolbar">
-        <div class="region-wrap">
-          <label for="sidoSelect">도/시</label>
-          <select id="sidoSelect">
-            <option value="">전국</option>
-          </select>
+    <div class="ld-scroll" id="ldScroll">
+      <section class="ld-panel ld-hero" data-panel>
+        <div class="ld-hero-content">
+          <span class="ld-hero-tag" data-i18n="tag">외국인이 먼저 찾은 한국의 숨은 명소</span>
+          <div>
+            <h1 data-i18n="heroTitle">당신이 모르는<br>한국이 있다</h1>
+            <p class="ld-hero-lead" data-i18n="heroLead">
+              외국인 여행자들이 먼저 발견한 숨은 명소부터, 오직 로컬 현지인들만 공유하는 보물 같은 비밀 장소까지 지금 확인해보세요.
+            </p>
+          </div>
+          <div class="ld-cta-stack">
+            <a class="ld-btn ld-btn-primary" href="/app.html?auth=register" data-i18n="signup">회원가입하고 발견하기</a>
+            <a class="ld-btn ld-btn-ghost" href="/app.html?auth=login" data-i18n="login">기존 계정으로 로그인</a>
+            <a class="ld-btn ld-btn-browse" href="/app.html" data-i18n="browse">둘러보기</a>
+          </div>
         </div>
-        <div class="board-search-wrap ai-search-wrap">
-          <label for="gemSearch" class="sr-only">장소명 검색</label>
-          <input id="gemSearch" type="search" placeholder="장소명 검색" autocomplete="off">
-          <button type="button" id="gemSearchBtn" class="btn-ghost board-search-btn">검색</button>
-        </div>
-        <div class="sort-wrap">
-          <label for="sort">정렬</label>
-          <select id="sort">
-            <option value="gem">추천순</option>
-            <option value="foreign">외국인 많은 순</option>
-            <option value="domestic">내국인 많은 순</option>
-          </select>
-        </div>
-      </div>
+        <div class="ld-scroll-hint" aria-hidden="true">아래로 스크롤</div>
+      </section>
 
-      <div id="status" class="status" hidden></div>
-      <ul id="results" class="post-list"></ul>
-    </section>
-
-    <!-- 내국인 추천 = DB Post 피드 -->
-    <section id="panel-domestic" class="panel" role="tabpanel" hidden>
-      <div class="panel-toolbar board-toolbar">
-        <div class="region-wrap">
-          <label for="sidoFilterDomestic">도/시</label>
-          <select id="sidoFilterDomestic">
-            <option value="">전국</option>
-          </select>
+      <section class="ld-panel ld-section" data-panel>
+        <div class="ld-section-head">
+          <h2 data-i18n="valueTitle">우리가 몰랐던 한국의 재발견</h2>
+          <p data-i18n="valueSub">서로 다른 눈으로 바라본 아름다운 공간들을 선별해 드립니다.</p>
         </div>
-        <div class="sort-wrap">
-          <label for="boardSortDomestic">정렬</label>
-          <select id="boardSortDomestic">
-            <option value="newest">최신순</option>
-            <option value="oldest">오래된순</option>
-            <option value="likes">추천순</option>
-            <option value="comments">댓글순</option>
-          </select>
+        <div class="ld-cards">
+          <article class="ld-card">
+            <h3 class="ld-card-title"><span class="ld-card-icon" aria-hidden="true">🌍</span><span data-i18n="card1Title">외국인의 시선</span></h3>
+            <p data-i18n="card1Body">외국인 여행자들이 편견 없이 먼저 발견한 한국의 이색적이고 매력적인 숨은 명소</p>
+          </article>
+          <article class="ld-card">
+            <h3 class="ld-card-title"><span class="ld-card-icon" aria-hidden="true">📍</span><span data-i18n="card2Title">현지인의 추천</span></h3>
+            <p data-i18n="card2Body">네이버에도 안 나오는, 동네 주민들만 살짝 찾아가는 진짜 오리지널 로컬 플레이스</p>
+          </article>
+          <article class="ld-card">
+            <h3 class="ld-card-title"><span class="ld-card-icon" aria-hidden="true">🔄</span><span data-i18n="card3Title">역수입 핫플</span></h3>
+            <p data-i18n="card3Body">틱톡과 인스타그램 등 해외 SNS에서 먼저 입소문 타며 열풍이 불기 시작한 새로운 핫플레이스</p>
+          </article>
         </div>
-        <div class="board-search-wrap">
-          <label for="boardSearchDomestic" class="sr-only">장소명 검색</label>
-          <input id="boardSearchDomestic" type="search" placeholder="장소명 검색" autocomplete="off">
-          <button type="button" id="boardSearchBtnDomestic" class="btn-ghost board-search-btn">검색</button>
+      </section>
+
+      <section class="ld-panel ld-section" data-panel>
+        <div class="ld-section-head">
+          <h2 data-i18n="howTitle">hiddentravel 이용 방법</h2>
+          <p data-i18n="howSub">단 3가지 단계로 완전히 새로운 형태의 여행을 경험해 보세요</p>
         </div>
-      </div>
-      <div id="boardStatusDomestic" class="status" hidden></div>
-      <ul id="boardListDomestic" class="thread-feed"></ul>
-    </section>
-
-    <!-- 외국인 추천 -->
-    <section id="panel-foreign" class="panel" role="tabpanel" hidden>
-      <div class="panel-toolbar board-toolbar">
-        <div class="region-wrap">
-          <label for="sidoFilterForeign">도/시</label>
-          <select id="sidoFilterForeign">
-            <option value="">전국</option>
-          </select>
+        <div class="ld-steps">
+          <div class="ld-step">
+            <span class="ld-step-num">01</span>
+            <div>
+              <h3 data-i18n="step1Title">지역 및 국적별 여행지 탐색</h3>
+              <p data-i18n="step1Body">필터를 통해 내국인/외국인 여행자들이 업로드한 전국 각지의 보물 같은 명소를 손쉽게 탐색하세요.</p>
+            </div>
+          </div>
+          <div class="ld-step">
+            <span class="ld-step-num">02</span>
+            <div>
+              <h3 data-i18n="step2Title">리얼 로컬 리뷰 확인</h3>
+              <p data-i18n="step2Body">단순 광고성 정보가 아닌, 다국적 여행가들과 로컬 주민들이 실제로 다녀와서 남긴 솔직한 후기를 읽어보세요.</p>
+            </div>
+          </div>
+          <div class="ld-step">
+            <span class="ld-step-num">03</span>
+            <div>
+              <h3 data-i18n="step3Title">나만의 여행 스토리 공유</h3>
+              <p data-i18n="step3Body">아직 사람들에게 잘 알려지지 않은 당신만의 비밀스러운 국내 여행지를 등록하고 소통을 시작하세요.</p>
+            </div>
+          </div>
         </div>
-        <div class="sort-wrap">
-          <label for="boardSortForeign">정렬</label>
-          <select id="boardSortForeign">
-            <option value="newest">최신순</option>
-            <option value="oldest">오래된순</option>
-            <option value="likes">추천순</option>
-            <option value="comments">댓글순</option>
-          </select>
+      </section>
+
+      <section class="ld-panel ld-panel-end" data-panel>
+        <div class="ld-bottom-cta">
+          <div>
+            <h2 data-i18n="ctaTitle">숨겨진 진짜 한국을<br>발견할 준비가 되셨나요?</h2>
+            <p data-i18n="ctaSub">지금 바로 가입하고 전 세계 탐험가들이 찾아낸 로컬 핫플레이스를 탐색해보세요.</p>
+          </div>
+          <a class="ld-btn ld-btn-primary" href="/app.html?auth=register" data-i18n="ctaBtn">회원가입하고 발견하기</a>
         </div>
-        <div class="board-search-wrap">
-          <label for="boardSearchForeign" class="sr-only">장소명 검색</label>
-          <input id="boardSearchForeign" type="search" placeholder="장소명 검색" autocomplete="off">
-          <button type="button" id="boardSearchBtnForeign" class="btn-ghost board-search-btn">검색</button>
-        </div>
-      </div>
-      <div id="boardStatusForeign" class="status" hidden></div>
-      <ul id="boardListForeign" class="thread-feed"></ul>
-    </section>
-
-    <!-- 마이페이지 -->
-    <section id="panel-my" class="panel" role="tabpanel" hidden>
-      <div class="my-header">
-        <button type="button" class="my-avatar" id="myAvatar" aria-label="프로필 사진">?</button>
-        <input id="myAvatarInput" type="file" accept="image/*" hidden>
-        <div class="my-info">
-          <p class="my-name" id="myName">게스트</p>
-          <p class="my-sub" id="mySub">로그인하면 내 글·추천 목록을 볼 수 있어요</p>
-          <button type="button" class="my-avatar-reset" id="myAvatarReset" hidden>기본 사진으로</button>
-        </div>
-      </div>
-      <div class="my-subtabs" role="tablist">
-        <button type="button" class="my-subtab active" data-my-view="posts">내가 쓴 글</button>
-        <button type="button" class="my-subtab" data-my-view="liked">추천한 글</button>
-      </div>
-      <div id="boardStatusMy" class="status" hidden></div>
-      <ul id="boardListMy" class="thread-feed"></ul>
-    </section>
-
-    <button type="button" id="writeBtn" class="fab" title="글쓰기">글쓰기</button>
-  </div>
-
-  <!-- 로그인 / 회원가입 -->
-  <dialog id="authDialog" class="modal">
-    <form method="dialog" id="authForm" class="modal-card">
-      <h2 id="authTitle">로그인</h2>
-      <div class="auth-mode-tabs">
-        <button type="button" class="auth-mode active" data-mode="login">로그인</button>
-        <button type="button" class="auth-mode" data-mode="register">회원가입</button>
-      </div>
-      <label>아이디<input id="authMemberId" name="memberId" autocomplete="username" required></label>
-      <label>비밀번호<input id="authPassword" name="password" type="password" autocomplete="current-password" required></label>
-      <label id="authNickWrap" hidden>닉네임<input id="authNickname" name="nickname" placeholder="선택 (없으면 아이디)"></label>
-      <p id="authError" class="form-error" hidden></p>
-      <div class="modal-actions">
-        <button type="button" id="authCancelBtn" class="btn-ghost">취소</button>
-        <button type="submit" class="btn-primary" id="authSubmit">로그인</button>
-      </div>
-    </form>
-  </dialog>
-
-  <!-- 글쓰기 -->
-  <dialog id="writeDialog" class="modal">
-    <form method="dialog" id="writeForm" class="modal-card">
-      <h2 id="writeTitle">글쓰기</h2>
-      <label>게시판
-        <select id="writeCategory" name="category">
-          <option value="DOMESTIC">내국인 추천</option>
-          <option value="FOREIGN">외국인 추천</option>
-        </select>
-      </label>
-      <label>장소명<input id="writeLocation" name="locationTitle" placeholder="예: 부산시립미술관" required></label>
-      <label>도/시
-        <select id="writeSido" name="address" required>
-          <option value="">선택</option>
-        </select>
-      </label>
-      <label>사진
-        <input id="writeImage" name="image" type="file" accept="image/*">
-      </label>
-      <div id="writeImagePreview" class="write-preview" hidden></div>
-      <label>내용<textarea id="writeContent" name="content" rows="5" required placeholder="방문 후기나 추천 이유를 적어 주세요."></textarea></label>
-      <p id="writeError" class="form-error" hidden></p>
-      <div class="modal-actions">
-        <button type="button" id="writeCancelBtn" class="btn-ghost">취소</button>
-        <button type="submit" value="ok" class="btn-primary" id="writeSubmit">등록</button>
-      </div>
-    </form>
-  </dialog>
-
-  <!-- 게시글 상세 (추천·댓글) -->
-  <dialog id="detailDialog" class="modal">
-    <div class="modal-card detail-card">
-      <button type="button" class="modal-close" id="detailClose" aria-label="닫기">×</button>
-      <div id="detailBody"></div>
-      <div class="detail-actions">
-        <button type="button" id="recommendBtn" class="btn-primary">추천</button>
-        <button type="button" id="editPostBtn" class="btn-ghost" hidden>수정</button>
-        <button type="button" id="deletePostBtn" class="btn-danger" hidden>삭제</button>
-      </div>
-      <section class="replies">
-        <h3>댓글</h3>
-        <ul id="replyList" class="reply-list"></ul>
-        <form id="replyForm" class="reply-form">
-          <input id="replyInput" type="text" placeholder="댓글을 입력하세요" required>
-          <button type="submit" class="btn-primary">등록</button>
-        </form>
+        <footer class="ld-footer">
+          <div class="ld-footer-brand">
+            <div class="ld-logo">
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
+                <circle cx="12" cy="12" r="9" stroke="#1A1A1A" stroke-width="2"/>
+                <path d="M3 12h18M12 3c2.5 2.8 3.8 5.8 3.8 9s-1.3 6.2-3.8 9c-2.5-2.8-3.8-5.8-3.8-9S9.5 5.8 12 3z" stroke="#1A1A1A" stroke-width="2"/>
+              </svg>
+              <span>hiddentravel.site</span>
+            </div>
+            <p data-i18n="footerTag">외국인의 시선으로 발견하고 로컬이 검증하는 국내 비밀 장소 SNS 플랫폼</p>
+          </div>
+          <div class="ld-footer-links">
+            <a href="#" data-i18n="terms">이용약관</a>
+            <a href="#" data-i18n="privacy">개인정보처리방침</a>
+            <a href="mailto:hello@hiddentravel.site" data-i18n="contact">고객문의</a>
+          </div>
+          <p class="ld-footer-copy">Copyright © 2026 hiddentravel. All rights reserved.</p>
+        </footer>
       </section>
     </div>
-  </dialog>
+  </div>
 
-  <!-- 관광지 상세 (설명·이용·근처) -->
-  <dialog id="placeDialog" class="modal place-modal">
-    <div class="place-sheet">
-      <button type="button" class="modal-close place-close" id="placeClose" aria-label="닫기">×</button>
-      <div id="placeBody" class="place-body">
-        <div class="place-loading">불러오는 중…</div>
-      </div>
-    </div>
-  </dialog>
+  <script>
+    const copy = {
+      ko: {
+        tag: "외국인이 먼저 찾은 한국의 숨은 명소",
+        heroTitle: "당신이 모르는<br>한국이 있다",
+        heroLead: "외국인 여행자들이 먼저 발견한 숨은 명소부터, 오직 로컬 현지인들만 공유하는 보물 같은 비밀 장소까지 지금 확인해보세요.",
+        signup: "회원가입하고 발견하기",
+        login: "기존 계정으로 로그인",
+        browse: "둘러보기",
+        valueTitle: "우리가 몰랐던 한국의 재발견",
+        valueSub: "서로 다른 눈으로 바라본 아름다운 공간들을 선별해 드립니다.",
+        card1Title: "외국인의 시선",
+        card1Body: "외국인 여행자들이 편견 없이 먼저 발견한 한국의 이색적이고 매력적인 숨은 명소",
+        card2Title: "현지인의 추천",
+        card2Body: "네이버에도 안 나오는, 동네 주민들만 살짝 찾아가는 진짜 오리지널 로컬 플레이스",
+        card3Title: "역수입 핫플",
+        card3Body: "틱톡과 인스타그램 등 해외 SNS에서 먼저 입소문 타며 열풍이 불기 시작한 새로운 핫플레이스",
+        howTitle: "hiddentravel 이용 방법",
+        howSub: "단 3가지 단계로 완전히 새로운 형태의 여행을 경험해 보세요",
+        step1Title: "지역 및 국적별 여행지 탐색",
+        step1Body: "필터를 통해 내국인/외국인 여행자들이 업로드한 전국 각지의 보물 같은 명소를 손쉽게 탐색하세요.",
+        step2Title: "리얼 로컬 리뷰 확인",
+        step2Body: "단순 광고성 정보가 아닌, 다국적 여행가들과 로컬 주민들이 실제로 다녀와서 남긴 솔직한 후기를 읽어보세요.",
+        step3Title: "나만의 여행 스토리 공유",
+        step3Body: "아직 사람들에게 잘 알려지지 않은 당신만의 비밀스러운 국내 여행지를 등록하고 소통을 시작하세요.",
+        ctaTitle: "숨겨진 진짜 한국을<br>발견할 준비가 되셨나요?",
+        ctaSub: "지금 바로 가입하고 전 세계 탐험가들이 찾아낸 로컬 핫플레이스를 탐색해보세요.",
+        ctaBtn: "회원가입하고 발견하기",
+        footerTag: "외국인의 시선으로 발견하고 로컬이 검증하는 국내 비밀 장소 SNS 플랫폼",
+        terms: "이용약관",
+        privacy: "개인정보처리방침",
+        contact: "고객문의",
+      },
+      en: {
+        tag: "Hidden spots foreign visitors found first",
+        heroTitle: "There's a Korea<br>you haven't seen",
+        heroLead: "From hidden gems discovered by travelers abroad to secret places locals quietly share — explore them now.",
+        signup: "Sign up and discover",
+        login: "Log in with existing account",
+        browse: "Browse",
+        valueTitle: "Rediscover Korea through new eyes",
+        valueSub: "Places curated from very different perspectives.",
+        card1Title: "Foreign eyes",
+        card1Body: "Unusual, charming spots first noticed by travelers without local bias",
+        card2Title: "Local picks",
+        card2Body: "Real neighborhood places you won't find on mainstream maps",
+        card3Title: "Re-imported hotspots",
+        card3Body: "Places that blew up first on TikTok and Instagram overseas",
+        howTitle: "How hiddentravel works",
+        howSub: "Three steps to a completely new kind of trip",
+        step1Title: "Browse by region and traveler type",
+        step1Body: "Filter domestic and foreign posts to find hidden spots across Korea.",
+        step2Title: "Read real local reviews",
+        step2Body: "Honest notes from travelers and locals who actually went — not ads.",
+        step3Title: "Share your own story",
+        step3Body: "Post the secret places you love and start the conversation.",
+        ctaTitle: "Ready to find<br>the real hidden Korea?",
+        ctaSub: "Sign up and explore local hotspots found by explorers worldwide.",
+        ctaBtn: "Sign up and discover",
+        footerTag: "A social platform for secret places found by visitors and verified by locals",
+        terms: "Terms",
+        privacy: "Privacy",
+        contact: "Contact",
+      },
+    };
 
-  <script src="/app.js"></script>
+    let lang = "ko";
+    function applyLang() {
+      const dict = copy[lang];
+      document.documentElement.lang = lang;
+      document.querySelectorAll("[data-i18n]").forEach((el) => {
+        const key = el.dataset.i18n;
+        if (dict[key] != null) el.innerHTML = dict[key];
+      });
+      document.querySelectorAll(".ld-lang button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.lang === lang);
+      });
+    }
+    document.querySelectorAll(".ld-lang button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        lang = btn.dataset.lang;
+        applyLang();
+      });
+    });
+
+    /* 한 화면씩 슬라이드처럼 넘기기 */
+    (function fullpageScroll() {
+      const scroller = document.getElementById("ldScroll");
+      if (!scroller) return;
+      const panels = [...scroller.querySelectorAll("[data-panel]")];
+      let locked = false;
+      let index = 0;
+
+      function go(to) {
+        if (to < 0 || to >= panels.length || locked) return;
+        locked = true;
+        index = to;
+        panels[index].scrollIntoView({ behavior: "smooth", block: "start" });
+        window.setTimeout(() => {
+          locked = false;
+        }, 700);
+      }
+
+      scroller.addEventListener(
+        "wheel",
+        (e) => {
+          if (Math.abs(e.deltaY) < 8) return;
+          e.preventDefault();
+          if (locked) return;
+          go(index + (e.deltaY > 0 ? 1 : -1));
+        },
+        { passive: false }
+      );
+
+      /* 터치는 CSS scroll-snap으로 자연스럽게 */
+      scroller.addEventListener("scroll", () => {
+        if (locked) return;
+        const top = scroller.scrollTop;
+        let nearest = 0;
+        let best = Infinity;
+        panels.forEach((p, i) => {
+          const d = Math.abs(p.offsetTop - top);
+          if (d < best) {
+            best = d;
+            nearest = i;
+          }
+        });
+        index = nearest;
+      });
+    })();
+  </script>
 </body>
 </html>
