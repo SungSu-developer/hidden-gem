@@ -128,8 +128,23 @@
 
     <!-- 계획 공유 (공개 코스) -->
     <section id="panel-courses" class="panel" role="tabpanel" hidden>
-      <div class="panel-toolbar courses-board-toolbar">
+      <div class="panel-toolbar board-toolbar courses-board-toolbar">
         <p class="panel-hint">다른 사람이 공유한 여행 계획을 보고 따라가 보세요.</p>
+        <div class="sort-wrap">
+          <label for="courseSortPublic">정렬</label>
+          <select id="courseSortPublic">
+            <option value="newest">최신순</option>
+            <option value="oldest">오래된순</option>
+            <option value="likes">좋아요순</option>
+            <option value="saves">저장순</option>
+            <option value="spots">장소 많은순</option>
+          </select>
+        </div>
+        <div class="board-search-wrap">
+          <label for="courseSearchPublic" class="sr-only">계획 검색</label>
+          <input id="courseSearchPublic" type="search" placeholder="제목·작성자 검색" autocomplete="off">
+          <button type="button" id="courseSearchBtnPublic" class="btn-ghost board-search-btn">검색</button>
+        </div>
       </div>
       <div id="boardStatusCourses" class="status" hidden></div>
       <div class="my-courses-layout" id="publicCoursesLayout">

@@ -483,13 +483,10 @@ async function loadPublicCourses() {
     const data = await readJsonResponse(res);
     if (!res.ok) throw new Error(data.error || "조회 실패");
     hideStatus(statusElBoard);
-    renderCourseList(data.courses || [], { listId: "courseListPublic", mode: "public", showAuthor: true });
-    if (!data.courses?.length) {
-      document.getElementById("courseListPublic").innerHTML =
-        `<p class="nearby-empty">아직 공유된 계획이 없습니다.</p>`;
-    }
+    publicCoursesCache = data.courses || [];
+    renderPublicCoursesFiltered();
     if (courseDetailCtx === "public" && currentCourse?.courseId) {
-      const still = (data.courses || []).some((c) => Number(c.courseId) === Number(currentCourse.courseId));
+      const still = publicCoursesCache.some((c) => Number(c.courseId) === Number(currentCourse.courseId));
       if (!still) clearCourseDetailPane("public");
     } else if (courseDetailCtx !== "public" || !currentCourse) {
       clearCourseDetailPane("public");
@@ -497,6 +494,63 @@ async function loadPublicCourses() {
   } catch (e) {
     showStatus(statusElBoard, e.message || "오류", "error");
   }
+}
+
+let publicCoursesCache = [];
+
+function sortPublicCourses(list, sortKey) {
+  const sorted = (list || []).slice();
+  const byTime = (a, b) => (Number(b.regAt) || 0) - (Number(a.regAt) || 0)
+    || (Number(b.courseId) || 0) - (Number(a.courseId) || 0);
+  switch (sortKey) {
+    case "oldest":
+      sorted.sort((a, b) => -byTime(a, b));
+      break;
+    case "likes":
+      sorted.sort((a, b) => (Number(b.likeCount) || 0) - (Number(a.likeCount) || 0) || byTime(a, b));
+      break;
+    case "saves":
+      sorted.sort((a, b) => (Number(b.saveCount) || 0) - (Number(a.saveCount) || 0) || byTime(a, b));
+      break;
+    case "spots":
+      sorted.sort((a, b) => (Number(b.spotCount) || 0) - (Number(a.spotCount) || 0) || byTime(a, b));
+      break;
+    case "newest":
+    default:
+      sorted.sort(byTime);
+      break;
+  }
+  return sorted;
+}
+
+function renderPublicCoursesFiltered() {
+  const q = (document.getElementById("courseSearchPublic")?.value || "").trim().toLowerCase();
+  const sortKey = document.getElementById("courseSortPublic")?.value || "newest";
+  let list = publicCoursesCache.slice();
+  if (q) {
+    list = list.filter((c) => {
+      const hay = [
+        c.title,
+        c.summary,
+        c.nickname,
+        c.memberId,
+      ]
+        .map((x) => String(x || "").toLowerCase())
+        .join(" ");
+      return hay.includes(q);
+    });
+  }
+  list = sortPublicCourses(list, sortKey);
+  const el = document.getElementById("courseListPublic");
+  if (!publicCoursesCache.length) {
+    if (el) el.innerHTML = `<p class="nearby-empty">아직 공유된 계획이 없습니다.</p>`;
+    return;
+  }
+  if (!list.length) {
+    if (el) el.innerHTML = `<p class="nearby-empty">검색 결과가 없습니다.</p>`;
+    return;
+  }
+  renderCourseList(list, { listId: "courseListPublic", mode: "public", showAuthor: true });
 }
 
 async function loadMyCourses() {
@@ -3463,6 +3517,15 @@ document.getElementById("courseDetailBodyPublic")?.addEventListener("click", (e)
 document.getElementById("courseDetailBody")?.addEventListener("click", (e) => {
   const spot = e.target.closest(".course-spot");
   if (!spot) return;
+  if (spotDeleteMode) {
+    e.preventDefault();
+    const seq = Number(spot.dataset.seq);
+    if (!seq) return;
+    if (selectedSpotSeqs.has(seq)) selectedSpotSeqs.delete(seq);
+    else selectedSpotSeqs.add(seq);
+    updateSpotDeleteSelectionUi();
+    return;
+  }
   if (spot.dataset.postId) {
     openDetail(Number(spot.dataset.postId));
     return;
@@ -3476,6 +3539,19 @@ document.getElementById("courseDetailBody")?.addEventListener("click", (e) => {
       thumbnail: "",
     };
     openPlaceDetail(gem);
+  }
+});
+
+document.getElementById("courseSortPublic")?.addEventListener("change", () => {
+  renderPublicCoursesFiltered();
+});
+document.getElementById("courseSearchBtnPublic")?.addEventListener("click", () => {
+  renderPublicCoursesFiltered();
+});
+document.getElementById("courseSearchPublic")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    renderPublicCoursesFiltered();
   }
 });
 
@@ -3578,6 +3654,10 @@ async function openCourseDetail(courseId, ctx = "my") {
     const av = data.profileImage
       ? `<img src="${escapeHtml(data.profileImage)}" alt="">`
       : escapeHtml(letter);
+    const canEditSpots =
+      courseDetailCtx === "my" && data.memberId === currentMemberId();
+    spotDeleteMode = false;
+    selectedSpotSeqs = new Set();
     const spots = (data.spots || [])
       .map((s, i) => {
         const seq = s.seq || i + 1;
@@ -3596,7 +3676,7 @@ async function openCourseDetail(courseId, ctx = "my") {
           : uiLang === "en"
             ? "AI pick"
             : "AI 추천";
-        return `<button type="button" class="course-spot" ${postAttr} ${gemAttr}>
+        return `<button type="button" class="course-spot" data-seq="${seq}" ${postAttr} ${gemAttr}>
           <div class="course-spot-left"><span class="course-seq">${seq}</span>${thumb}</div>
           <div class="course-spot-body">
             <div class="course-spot-title-row">
@@ -3612,6 +3692,14 @@ async function openCourseDetail(courseId, ctx = "my") {
         </button>`;
       })
       .join("");
+    const spotsHeader = canEditSpots
+      ? `<div class="course-spots-head">
+          <h4>방문하는 장소 리스트</h4>
+          <div class="course-spots-head-actions" id="courseSpotsHeadActions">
+            <button type="button" class="btn-ghost course-spots-delete-btn" id="courseSpotsDeleteBtn">삭제</button>
+          </div>
+        </div>`
+      : `<div class="course-spots-head"><h4>방문하는 장소 리스트</h4></div>`;
     const mapId = courseDetailCtx === "public" ? "courseMapBtnPublic" : "courseMapBtn";
     const statusId = courseDetailCtx === "public" ? "courseMapStatusPublic" : "courseMapStatus";
     const canvasId = courseDetailCtx === "public" ? "courseMapCanvasPublic" : "courseMapCanvas";
@@ -3633,8 +3721,8 @@ async function openCourseDetail(courseId, ctx = "my") {
         <span>저장 ${Number(data.saveCount) || 0}</span>
         <span class="muted">${escapeHtml(courseDateLabel(data.regDate, data.regAt))} 생성</span>
       </div>
-      <div class="course-spots">
-        <h4>방문하는 장소 리스트</h4>
+      <div class="course-spots" id="courseSpotsBlock">
+        ${spotsHeader}
         ${spots || `<p class="nearby-empty">장소가 없습니다. AI 추천에서 담아 보세요.</p>`}
       </div>
       <div class="course-map-box">
@@ -3645,8 +3733,87 @@ async function openCourseDetail(courseId, ctx = "my") {
       </div>`;
     document.getElementById(mapId)?.addEventListener("click", () => openCourseMap());
     document.getElementById(likeId)?.addEventListener("click", () => toggleCourseLike());
+    document.getElementById("courseSpotsDeleteBtn")?.addEventListener("click", () => enterSpotDeleteMode());
   } catch (err) {
     alert(err.message || "코스를 열 수 없습니다.");
+  }
+}
+
+let spotDeleteMode = false;
+/** @type {Set<number>} */
+let selectedSpotSeqs = new Set();
+
+function updateSpotDeleteSelectionUi() {
+  const block = document.getElementById("courseSpotsBlock");
+  if (!block) return;
+  block.classList.toggle("is-deleting", spotDeleteMode);
+  block.querySelectorAll(".course-spot[data-seq]").forEach((el) => {
+    const seq = Number(el.dataset.seq);
+    el.classList.toggle("is-marked-delete", spotDeleteMode && selectedSpotSeqs.has(seq));
+  });
+  const confirmBtn = document.getElementById("courseSpotsDeleteConfirm");
+  if (confirmBtn) {
+    const n = selectedSpotSeqs.size;
+    confirmBtn.textContent = n ? `확인 (${n})` : "확인";
+    confirmBtn.disabled = n === 0;
+  }
+}
+
+function enterSpotDeleteMode() {
+  if (!currentCourse?.spots?.length) {
+    alert("삭제할 장소가 없습니다.");
+    return;
+  }
+  spotDeleteMode = true;
+  selectedSpotSeqs = new Set();
+  const actions = document.getElementById("courseSpotsHeadActions");
+  if (actions) {
+    actions.innerHTML = `
+      <button type="button" class="btn-ghost" id="courseSpotsDeleteCancel">취소</button>
+      <button type="button" class="btn-primary course-spots-delete-confirm" id="courseSpotsDeleteConfirm" disabled>확인</button>`;
+    document.getElementById("courseSpotsDeleteCancel")?.addEventListener("click", () => exitSpotDeleteMode());
+    document.getElementById("courseSpotsDeleteConfirm")?.addEventListener("click", () => confirmSpotDelete());
+  }
+  updateSpotDeleteSelectionUi();
+}
+
+function exitSpotDeleteMode() {
+  spotDeleteMode = false;
+  selectedSpotSeqs = new Set();
+  const actions = document.getElementById("courseSpotsHeadActions");
+  if (actions) {
+    actions.innerHTML = `<button type="button" class="btn-ghost course-spots-delete-btn" id="courseSpotsDeleteBtn">삭제</button>`;
+    document.getElementById("courseSpotsDeleteBtn")?.addEventListener("click", () => enterSpotDeleteMode());
+  }
+  updateSpotDeleteSelectionUi();
+}
+
+async function confirmSpotDelete() {
+  if (!requireLogin() || !currentCourse?.courseId) return;
+  const seqs = [...selectedSpotSeqs].sort((a, b) => a - b);
+  if (!seqs.length) {
+    alert("삭제할 장소를 선택하세요.");
+    return;
+  }
+  if (!confirm(`선택한 ${seqs.length}개 장소를 삭제할까요?`)) return;
+  const courseId = currentCourse.courseId;
+  const confirmBtn = document.getElementById("courseSpotsDeleteConfirm");
+  if (confirmBtn) confirmBtn.disabled = true;
+  try {
+    const res = await fetch(`/api/courses/${courseId}/spots`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memberId: currentMemberId(), seqs }),
+    });
+    const data = await readJsonResponse(res);
+    if (!res.ok) throw new Error(data.error || "삭제 실패");
+    spotDeleteMode = false;
+    selectedSpotSeqs = new Set();
+    await loadMyCourses();
+    await openCourseDetail(courseId, "my");
+  } catch (err) {
+    alert(err.message || "삭제 실패");
+    if (confirmBtn) confirmBtn.disabled = selectedSpotSeqs.size === 0;
   }
 }
 

@@ -1363,8 +1363,29 @@ dialog.course-detail-modal::backdrop {
 }
 
 .course-spots h4 {
-  margin: 0 0 0.35rem;
+  margin: 0;
   font-size: 1.1rem;
+}
+
+.course-spots-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.course-spots-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.course-spots-delete-btn,
+.course-spots-delete-confirm {
+  font-size: 0.82rem !important;
+  padding: 0.35rem 0.75rem !important;
 }
 
 .course-spot {
@@ -1381,8 +1402,22 @@ dialog.course-detail-modal::backdrop {
   color: inherit;
 }
 
+.course-spots.is-deleting .course-spot {
+  border-style: dashed;
+}
+
+.course-spot.is-marked-delete {
+  border-color: #f04438;
+  background: #fef3f2;
+  box-shadow: inset 0 0 0 1px #fecdca;
+}
+
 .course-spot:hover {
   border-color: #f9e000;
+}
+
+.course-spot.is-marked-delete:hover {
+  border-color: #f04438;
 }
 
 .course-spot-left {
@@ -1537,8 +1572,7 @@ dialog.course-detail-modal::backdrop {
 .courses-board-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  gap: 0.75rem 1rem;
   flex-wrap: wrap;
   padding: 1rem 0 0.85rem;
   border-bottom: 1px solid var(--border);
@@ -1547,7 +1581,12 @@ dialog.course-detail-modal::backdrop {
 
 .courses-board-toolbar .panel-hint {
   margin: 0;
-  flex: 1;
+  flex: 1 1 100%;
+}
+
+.courses-board-toolbar .sort-wrap,
+.courses-board-toolbar .board-search-wrap {
+  margin: 0;
 }
 
 .course-detail-actions {
