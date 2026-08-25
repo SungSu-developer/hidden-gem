@@ -314,6 +314,33 @@ public final class BoardApi {
                         + (course == null ? seq : course.get("spotCount")) + "}");
                 return;
             }
+            if (parts.length == 2 && "spots".equals(parts[1]) && "DELETE".equalsIgnoreCase(method)) {
+                String raw = readBody(ex);
+                Map<String, String> body = parseJson(raw);
+                String memberId = body.getOrDefault("memberId", "");
+                List<Long> seqLongs = extractJsonLongArray(raw, "seqs");
+                List<Integer> seqs = new ArrayList<>();
+                for (Long s : seqLongs) {
+                    if (s != null && s > 0 && s <= Integer.MAX_VALUE) {
+                        seqs.add(s.intValue());
+                    }
+                }
+                BoardDb.removeCourseSpots(courseId, memberId, seqs);
+                Map<String, Object> course = BoardDb.getCourse(courseId, memberId);
+                json(ex, 200, "{\"ok\":true,\"spotCount\":"
+                        + (course == null ? 0 : course.get("spotCount")) + "}");
+                return;
+            }
+            if (parts.length == 3 && "spots".equals(parts[1]) && "DELETE".equalsIgnoreCase(method)) {
+                int seq = Integer.parseInt(parts[2]);
+                Map<String, String> body = parseJson(readBody(ex));
+                String memberId = body.getOrDefault("memberId", "");
+                BoardDb.removeCourseSpot(courseId, memberId, seq);
+                Map<String, Object> course = BoardDb.getCourse(courseId, memberId);
+                json(ex, 200, "{\"ok\":true,\"spotCount\":"
+                        + (course == null ? 0 : course.get("spotCount")) + "}");
+                return;
+            }
             json(ex, 404, error("Not Found"));
         } catch (NumberFormatException e) {
             json(ex, 400, error("잘못된 course id"));

@@ -1328,6 +1328,77 @@ public final class BoardDb {
         }
     }
 
+    /** 코스에서 구간(스팟) 삭제 후 seq 재정렬 */
+    public static void removeCourseSpot(long courseId, String memberId, int seq) throws Exception {
+        removeCourseSpots(courseId, memberId, List.of(seq));
+    }
+
+    /** 여러 구간 삭제 후 1부터 재번호 */
+    public static void removeCourseSpots(long courseId, String memberId, List<Integer> seqs) throws Exception {
+        if (seqs == null || seqs.isEmpty()) {
+            throw new IllegalArgumentException("삭제할 구간을 선택하세요.");
+        }
+        try (Connection conn = open()) {
+            conn.setAutoCommit(false);
+            try {
+                String owner = courseOwner(conn, courseId);
+                if (owner == null) {
+                    throw new IllegalArgumentException("코스를 찾을 수 없습니다.");
+                }
+                if (!owner.equals(memberId == null ? "" : memberId.trim())) {
+                    throw new IllegalArgumentException("본인 코스의 구간만 삭제할 수 있습니다.");
+                }
+                int deleted = 0;
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM CourseSpot WHERE course_id = ? AND seq_no = ?")) {
+                    for (Integer seq : seqs) {
+                        if (seq == null || seq < 1) {
+                            continue;
+                        }
+                        ps.setLong(1, courseId);
+                        ps.setInt(2, seq);
+                        deleted += ps.executeUpdate();
+                    }
+                }
+                if (deleted == 0) {
+                    throw new IllegalArgumentException("해당 구간을 찾을 수 없습니다.");
+                }
+                List<Integer> remain = new ArrayList<>();
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "SELECT seq_no FROM CourseSpot WHERE course_id = ? ORDER BY seq_no ASC")) {
+                    ps.setLong(1, courseId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            remain.add(rs.getInt(1));
+                        }
+                    }
+                }
+                // PK 충돌 피하려고 임시 큰 번호로 이동 후 1..N 재부여
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "UPDATE CourseSpot SET seq_no = ? WHERE course_id = ? AND seq_no = ?")) {
+                    for (int i = 0; i < remain.size(); i++) {
+                        ps.setInt(1, 10000 + i);
+                        ps.setLong(2, courseId);
+                        ps.setInt(3, remain.get(i));
+                        ps.executeUpdate();
+                    }
+                    for (int i = 0; i < remain.size(); i++) {
+                        ps.setInt(1, i + 1);
+                        ps.setLong(2, courseId);
+                        ps.setInt(3, 10000 + i);
+                        ps.executeUpdate();
+                    }
+                }
+                conn.commit();
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
     private static int spotCount(Connection conn, long courseId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT COUNT(*) FROM CourseSpot WHERE course_id = ?")) {
