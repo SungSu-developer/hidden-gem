@@ -25,6 +25,7 @@
           <button type="button" class="tab active" data-tab="ai" role="tab" aria-selected="true">AI 추천</button>
           <button type="button" class="tab" data-tab="domestic" role="tab" aria-selected="false">내국인 추천</button>
           <button type="button" class="tab" data-tab="foreign" role="tab" aria-selected="false">외국인 추천</button>
+          <button type="button" class="tab" data-tab="courses" role="tab" aria-selected="false">계획 공유</button>
           <button type="button" class="tab" data-tab="my" role="tab" aria-selected="false">마이페이지</button>
         </nav>
 
@@ -125,23 +126,93 @@
       <ul id="boardListForeign" class="thread-feed"></ul>
     </section>
 
+    <!-- 계획 공유 (공개 코스) -->
+    <section id="panel-courses" class="panel" role="tabpanel" hidden>
+      <div class="panel-toolbar courses-board-toolbar">
+        <p class="panel-hint">다른 사람이 공유한 여행 계획을 보고 따라가 보세요.</p>
+      </div>
+      <div id="boardStatusCourses" class="status" hidden></div>
+      <div class="my-courses-layout" id="publicCoursesLayout">
+        <div class="my-courses-left">
+          <div id="courseListPublic" class="course-list"></div>
+        </div>
+        <aside class="my-courses-right" id="courseDetailPanePublic" aria-live="polite">
+          <div class="course-detail-sheet course-detail-inline">
+            <header class="course-detail-top">
+              <button type="button" class="course-back" id="courseDetailBackPublic" aria-label="목록으로">←</button>
+              <h2 id="courseDetailNavTitlePublic">계획 공유</h2>
+              <span class="course-more-wrap" id="courseMoreWrapPublic" hidden></span>
+            </header>
+            <div id="courseDetailBodyPublic" class="course-detail-body">
+              <div class="course-detail-empty">왼쪽에서 계획을 선택하세요</div>
+            </div>
+            <div class="course-detail-actions" id="courseDetailActionsPublic" hidden>
+              <button type="button" class="btn-ghost" id="courseSaveBtnPublic">계획 저장</button>
+              <button type="button" class="btn-primary" id="courseFollowBtnPublic">계획 따라가기</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
     <!-- 마이페이지 -->
     <section id="panel-my" class="panel" role="tabpanel" hidden>
-      <div class="my-header">
-        <button type="button" class="my-avatar" id="myAvatar" aria-label="프로필 사진">?</button>
-        <input id="myAvatarInput" type="file" accept="image/*" hidden>
-        <div class="my-info">
-          <p class="my-name" id="myName">게스트</p>
-          <p class="my-sub" id="mySub">로그인하면 내 글·추천 목록을 볼 수 있어요</p>
-          <button type="button" class="my-avatar-reset" id="myAvatarReset" hidden>기본 사진으로</button>
+      <div class="my-profile-card" id="myProfileCard">
+        <div class="my-profile-banner"></div>
+        <div class="my-profile-body">
+          <div class="my-avatar-wrap">
+            <button type="button" class="my-avatar" id="myAvatar" aria-label="프로필 사진">?</button>
+            <input id="myAvatarInput" type="file" accept="image/*" hidden>
+          </div>
+          <div class="my-info">
+            <p class="my-name" id="myName">게스트</p>
+            <p class="my-sub" id="mySub">로그인하면 내 글·추천·여행 계획을 볼 수 있어요</p>
+            <button type="button" class="my-avatar-reset" id="myAvatarReset" hidden>기본 사진으로</button>
+          </div>
+          <div class="my-stats" id="myStats" hidden>
+            <button type="button" class="my-stat" data-stat="posts"><strong id="myStatPosts">0</strong><span>게시글</span></button>
+            <button type="button" class="my-stat" data-stat="followers"><strong id="myStatFollowers">0</strong><span>팔로워</span></button>
+            <button type="button" class="my-stat" data-stat="following"><strong id="myStatFollowing">0</strong><span>팔로잉</span></button>
+          </div>
         </div>
       </div>
+
       <div class="my-subtabs" role="tablist">
         <button type="button" class="my-subtab active" data-my-view="posts">내가 쓴 글</button>
         <button type="button" class="my-subtab" data-my-view="liked">추천한 글</button>
+        <button type="button" class="my-subtab" data-my-view="courses">내 여행 계획</button>
       </div>
       <div id="boardStatusMy" class="status" hidden></div>
       <ul id="boardListMy" class="thread-feed"></ul>
+
+      <div class="my-courses-layout" id="myCoursesLayout" hidden>
+        <div class="my-courses-left">
+          <div id="courseListMy" class="course-list"></div>
+        </div>
+        <aside class="my-courses-right" id="courseDetailPane" aria-live="polite">
+          <div class="course-detail-sheet course-detail-inline">
+            <header class="course-detail-top">
+              <button type="button" class="course-back" id="courseDetailBack" aria-label="목록으로">←</button>
+              <h2 id="courseDetailNavTitle">여행 계획</h2>
+              <div class="course-more-wrap" id="courseMoreWrap" hidden>
+                <button type="button" class="course-more" id="courseDetailMore" aria-label="더보기" aria-expanded="false" aria-haspopup="menu">⋯</button>
+                <div class="course-more-menu" id="courseMoreMenu" role="menu" hidden>
+                  <button type="button" role="menuitem" id="coursePublishBtn">계획 공유에 올리기</button>
+                  <button type="button" role="menuitem" id="courseEditBtn">수정</button>
+                  <button type="button" role="menuitem" id="courseDeleteBtn" class="danger">삭제</button>
+                </div>
+              </div>
+            </header>
+            <div id="courseDetailBody" class="course-detail-body">
+              <div class="course-detail-empty">왼쪽에서 여행 계획을 선택하세요</div>
+            </div>
+            <div class="course-detail-actions" id="courseDetailActions" hidden>
+              <button type="button" class="btn-ghost" id="courseGoAiFromDetailBtn">코스 추가하러 가기</button>
+              <button type="button" class="btn-primary" id="courseFollowBtn">계획 따라가기</button>
+            </div>
+          </div>
+        </aside>
+      </div>
     </section>
   </div>
 
@@ -197,9 +268,13 @@
   <dialog id="detailDialog" class="modal">
     <div class="modal-card detail-card">
       <button type="button" class="modal-close" id="detailClose" aria-label="닫기">×</button>
+      <button type="button" class="tour-nav tour-nav-prev" data-tour-dir="prev" hidden aria-label="이전 장소">‹</button>
+      <button type="button" class="tour-nav tour-nav-next" data-tour-dir="next" hidden aria-label="다음 장소">›</button>
+      <span class="tour-nav-badge" hidden>1/1</span>
       <div id="detailBody"></div>
       <div class="detail-actions">
         <button type="button" id="recommendBtn" class="btn-primary">추천</button>
+        <button type="button" id="addPostToCourseBtn" class="btn-ghost">여행 계획에 담기</button>
         <button type="button" id="editPostBtn" class="btn-ghost" hidden>수정</button>
         <button type="button" id="deletePostBtn" class="btn-danger" hidden>삭제</button>
       </div>
@@ -218,9 +293,65 @@
   <dialog id="placeDialog" class="modal place-modal">
     <div class="place-sheet">
       <button type="button" class="modal-close place-close" id="placeClose" aria-label="닫기">×</button>
+      <button type="button" class="tour-nav tour-nav-prev" data-tour-dir="prev" hidden aria-label="이전 장소">‹</button>
+      <button type="button" class="tour-nav tour-nav-next" data-tour-dir="next" hidden aria-label="다음 장소">›</button>
+      <span class="tour-nav-badge" hidden>1/1</span>
       <div id="placeBody" class="place-body">
         <div class="place-loading">불러오는 중…</div>
       </div>
+      <div class="place-footer-actions">
+        <button type="button" id="addPlaceToCourseBtn" class="btn-add-course">여행 계획에 담기</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- 계획 공유 → 내 계획으로 저장 -->
+  <dialog id="saveCourseDialog" class="modal">
+    <form method="dialog" id="saveCourseForm" class="modal-card">
+      <h2>내 계획으로 저장</h2>
+      <p class="course-hint">제목과 소개를 원하는 대로 바꾼 뒤 저장하세요.</p>
+      <label>제목<input id="saveCourseTitle" name="title" required placeholder="예: 서울 주말 코스"></label>
+      <label>소개<textarea id="saveCourseSummary" name="summary" rows="2" placeholder="한 줄 소개 (선택)"></textarea></label>
+      <p id="saveCourseError" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" id="saveCourseCancelBtn" class="btn-ghost">취소</button>
+        <button type="submit" class="btn-primary" id="saveCourseSubmit">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 여행 코스 만들기 (빈 플리) -->
+  <dialog id="courseDialog" class="modal">
+    <form method="dialog" id="courseForm" class="modal-card">
+      <h2 id="courseFormTitle">새 여행 계획</h2>
+      <label>제목<input id="courseTitle" name="title" required placeholder="예: 서울 숨은 맛집 투어"></label>
+      <label>소개<textarea id="courseSummary" name="summary" rows="2" placeholder="한 줄 소개 (선택)"></textarea></label>
+      <p class="course-hint">장소는 AI 추천·게시판에서 「담기」로 추가하세요.</p>
+      <p id="courseError" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" id="courseCancelBtn" class="btn-ghost">취소</button>
+        <button type="submit" class="btn-primary" id="courseSubmit">만들기</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 여행 계획에 담기 (플리 선택) -->
+  <dialog id="addToCourseDialog" class="modal">
+    <div class="modal-card">
+      <button type="button" class="modal-close" id="addToCourseClose" aria-label="닫기">×</button>
+      <h2>여행 계획에 담기</h2>
+      <p id="addToCourseTarget" class="course-hint"></p>
+      <ul id="addToCourseList" class="add-course-list"></ul>
+      <button type="button" class="btn-ghost add-course-new" id="addToCourseNew">+ 새 계획 만들고 담기</button>
+    </div>
+  </dialog>
+
+  <!-- 팔로워/팔로잉 목록 -->
+  <dialog id="followDialog" class="modal">
+    <div class="modal-card">
+      <button type="button" class="modal-close" id="followDialogClose" aria-label="닫기">×</button>
+      <h2 id="followDialogTitle">팔로워</h2>
+      <ul id="followDialogList" class="follow-list"></ul>
     </div>
   </dialog>
 

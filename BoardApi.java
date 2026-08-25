@@ -85,13 +85,19 @@ public final class BoardApi {
     public static void handleProfile(HttpExchange ex) throws IOException {
         try {
             if ("GET".equalsIgnoreCase(ex.getRequestMethod())) {
-                String memberId = query(ex.getRequestURI()).getOrDefault("memberId", "");
+                Map<String, String> q = query(ex.getRequestURI());
+                String memberId = q.getOrDefault("memberId", "");
+                String viewerId = q.getOrDefault("viewerId", "");
                 Map<String, String> user = BoardDb.getMember(memberId);
                 if (user == null) {
                     json(ex, 404, error("회원을 찾을 수 없습니다."));
                     return;
                 }
-                json(ex, 200, userJson(user));
+                long posts = BoardDb.countPostsByAuthor(memberId);
+                long followers = BoardDb.countFollowers(memberId);
+                long following = BoardDb.countFollowing(memberId);
+                boolean isFollowing = BoardDb.isFollowing(viewerId, memberId);
+                json(ex, 200, profileJson(user, posts, followers, following, isFollowing));
                 return;
             }
             if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
@@ -110,6 +116,207 @@ public final class BoardApi {
             }
             Map<String, String> user = BoardDb.updateProfileImage(memberId, profileImage);
             json(ex, 200, userJson(user));
+        } catch (IllegalArgumentException e) {
+            json(ex, 400, error(e.getMessage()));
+        } catch (Exception e) {
+            json(ex, 500, error(e.getMessage()));
+        }
+    }
+
+    public static void handleFollow(HttpExchange ex) throws IOException {
+        String path = ex.getRequestURI().getPath();
+        String method = ex.getRequestMethod();
+        try {
+            if ("/api/follow".equals(path) && "POST".equalsIgnoreCase(method)) {
+                Map<String, String> body = parseJson(readBody(ex));
+                boolean on = BoardDb.toggleFollow(
+                        body.getOrDefault("memberId", ""),
+                        body.getOrDefault("targetId", ""));
+                long followers = BoardDb.countFollowers(body.getOrDefault("targetId", ""));
+                json(ex, 200, "{\"following\":" + on + ",\"followerCount\":" + followers + "}");
+                return;
+            }
+            if ("/api/follow/list".equals(path) && "GET".equalsIgnoreCase(method)) {
+                Map<String, String> q = query(ex.getRequestURI());
+                String memberId = q.getOrDefault("memberId", "");
+                String type = q.getOrDefault("type", "followers");
+                List<Map<String, String>> list = "following".equalsIgnoreCase(type)
+                        ? BoardDb.listFollowing(memberId)
+                        : BoardDb.listFollowers(memberId);
+                StringBuilder sb = new StringBuilder("{\"members\":[");
+                for (int i = 0; i < list.size(); i++) {
+                    if (i > 0) {
+                        sb.append(',');
+                    }
+                    sb.append(userJson(list.get(i)));
+                }
+                sb.append("]}");
+                json(ex, 200, sb.toString());
+                return;
+            }
+            json(ex, 404, error("Not Found"));
+        } catch (IllegalArgumentException e) {
+            json(ex, 400, error(e.getMessage()));
+        } catch (Exception e) {
+            json(ex, 500, error(e.getMessage()));
+        }
+    }
+
+    public static void handleCourses(HttpExchange ex) throws IOException {
+        String path = ex.getRequestURI().getPath();
+        String method = ex.getRequestMethod();
+        try {
+            if ("/api/courses".equals(path)) {
+                if ("GET".equalsIgnoreCase(method)) {
+                    Map<String, String> q = query(ex.getRequestURI());
+                    String viewer = q.getOrDefault("viewerId", q.getOrDefault("memberId", ""));
+                    if ("1".equals(q.get("public")) || "true".equalsIgnoreCase(q.getOrDefault("public", ""))) {
+                        List<Map<String, Object>> courses = BoardDb.listPublicCourses(viewer, 50);
+                        StringBuilder sb = new StringBuilder("{\"courses\":[");
+                        for (int i = 0; i < courses.size(); i++) {
+                            if (i > 0) {
+                                sb.append(',');
+                            }
+                            sb.append(courseJson(courses.get(i), false));
+                        }
+                        sb.append("]}");
+                        json(ex, 200, sb.toString());
+                        return;
+                    }
+                    String owner = q.getOrDefault("memberId", "");
+                    List<Map<String, Object>> courses = BoardDb.listCourses(owner, viewer.isBlank() ? owner : viewer);
+                    StringBuilder sb = new StringBuilder("{\"courses\":[");
+                    for (int i = 0; i < courses.size(); i++) {
+                        if (i > 0) {
+                            sb.append(',');
+                        }
+                        sb.append(courseJson(courses.get(i), false));
+                    }
+                    sb.append("]}");
+                    json(ex, 200, sb.toString());
+                    return;
+                }
+                if ("POST".equalsIgnoreCase(method)) {
+                    String raw = readBody(ex);
+                    Map<String, String> body = parseJson(raw);
+                    List<Long> postIds = extractJsonLongArray(raw, "postIds");
+                    long id = BoardDb.createCourse(
+                            body.getOrDefault("memberId", ""),
+                            body.getOrDefault("title", ""),
+                            body.getOrDefault("summary", ""),
+                            body.getOrDefault("coverImage", ""),
+                            postIds);
+                    Map<String, Object> course = BoardDb.getCourse(id, body.getOrDefault("memberId", ""));
+                    json(ex, 201, courseJson(course, true));
+                    return;
+                }
+                json(ex, 405, error("GET or POST only"));
+                return;
+            }
+
+            if (!path.startsWith("/api/courses/")) {
+                json(ex, 404, error("Not Found"));
+                return;
+            }
+            String rest = path.substring("/api/courses/".length());
+            String[] parts = rest.split("/");
+            if (parts.length == 0 || parts[0].isBlank()) {
+                json(ex, 404, error("Not Found"));
+                return;
+            }
+            long courseId = Long.parseLong(parts[0]);
+
+            if (parts.length == 1) {
+                if ("GET".equalsIgnoreCase(method)) {
+                    String viewer = query(ex.getRequestURI()).getOrDefault("memberId", "");
+                    Map<String, Object> course = BoardDb.getCourse(courseId, viewer);
+                    if (course == null) {
+                        json(ex, 404, error("코스를 찾을 수 없습니다."));
+                        return;
+                    }
+                    json(ex, 200, courseJson(course, true));
+                    return;
+                }
+                if ("PUT".equalsIgnoreCase(method)) {
+                    String raw = readBody(ex);
+                    Map<String, String> body = parseJson(raw);
+                    BoardDb.updateCourse(
+                            courseId,
+                            body.getOrDefault("memberId", ""),
+                            body.getOrDefault("title", ""),
+                            body.getOrDefault("summary", ""),
+                            body.getOrDefault("coverImage", ""),
+                            extractJsonLongArray(raw, "postIds"));
+                    Map<String, Object> course = BoardDb.getCourse(courseId, body.getOrDefault("memberId", ""));
+                    json(ex, 200, courseJson(course, true));
+                    return;
+                }
+                if ("DELETE".equalsIgnoreCase(method)) {
+                    Map<String, String> body = parseJson(readBody(ex));
+                    BoardDb.deleteCourse(courseId, body.getOrDefault("memberId", ""));
+                    json(ex, 200, "{\"ok\":true}");
+                    return;
+                }
+                json(ex, 405, error("GET, PUT or DELETE only"));
+                return;
+            }
+
+            if (parts.length == 2 && "publish".equals(parts[1]) && "POST".equalsIgnoreCase(method)) {
+                Map<String, String> body = parseJson(readBody(ex));
+                String raw = body.get("public");
+                boolean on = raw == null
+                        || (!"false".equalsIgnoreCase(raw) && !"0".equals(raw));
+                boolean published = BoardDb.setCoursePublic(courseId, body.getOrDefault("memberId", ""), on);
+                json(ex, 200, "{\"isPublic\":" + published + "}");
+                return;
+            }
+            if (parts.length == 2 && "like".equals(parts[1]) && "POST".equalsIgnoreCase(method)) {
+                Map<String, String> body = parseJson(readBody(ex));
+                boolean on = BoardDb.toggleCourseLike(body.getOrDefault("memberId", ""), courseId);
+                Map<String, Object> course = BoardDb.getCourse(courseId, body.getOrDefault("memberId", ""));
+                json(ex, 200, "{\"liked\":" + on + ",\"likeCount\":"
+                        + (course == null ? 0 : course.get("likeCount")) + "}");
+                return;
+            }
+            if (parts.length == 2 && "save".equals(parts[1]) && "POST".equalsIgnoreCase(method)) {
+                Map<String, String> body = parseJson(readBody(ex));
+                String memberId = body.getOrDefault("memberId", "");
+                long newId = BoardDb.savePublicCourseToMine(
+                        courseId,
+                        memberId,
+                        body.get("title"),
+                        body.get("summary"));
+                Map<String, Object> course = BoardDb.getCourse(courseId, memberId);
+                json(ex, 200, "{\"ok\":true,\"courseId\":" + newId
+                        + ",\"saved\":true,\"saveCount\":"
+                        + (course == null ? 0 : course.get("saveCount")) + "}");
+                return;
+            }
+            if (parts.length == 2 && "spots".equals(parts[1]) && "POST".equalsIgnoreCase(method)) {
+                Map<String, String> body = parseJson(readBody(ex));
+                String postIdRaw = body.get("postId");
+                Long postId = null;
+                if (postIdRaw != null && !postIdRaw.isBlank() && !"null".equals(postIdRaw)) {
+                    postId = Long.parseLong(postIdRaw);
+                }
+                int seq = BoardDb.addCourseSpot(
+                        courseId,
+                        body.getOrDefault("memberId", ""),
+                        postId,
+                        body.getOrDefault("title", ""),
+                        body.getOrDefault("address", ""),
+                        body.getOrDefault("imageUrl", ""),
+                        body.getOrDefault("note", ""),
+                        body.getOrDefault("resNm", ""),
+                        body.getOrDefault("sido", ""));
+                Map<String, Object> course = BoardDb.getCourse(courseId, body.getOrDefault("memberId", ""));
+                json(ex, 201, "{\"seq\":" + seq + ",\"spotCount\":"
+                        + (course == null ? seq : course.get("spotCount")) + "}");
+                return;
+            }
+            json(ex, 404, error("Not Found"));
+        } catch (NumberFormatException e) {
+            json(ex, 400, error("잘못된 course id"));
         } catch (IllegalArgumentException e) {
             json(ex, 400, error(e.getMessage()));
         } catch (Exception e) {
@@ -502,6 +709,105 @@ public final class BoardApi {
                 + ",\"nickname\":" + q(user.get("nickname"))
                 + ",\"profileImage\":" + q(user.get("profileImage"))
                 + "}";
+    }
+
+    private static String profileJson(
+            Map<String, String> user,
+            long posts,
+            long followers,
+            long following,
+            boolean isFollowing) {
+        return "{"
+                + "\"memberId\":" + q(user.get("memberId"))
+                + ",\"nickname\":" + q(user.get("nickname"))
+                + ",\"profileImage\":" + q(user.get("profileImage"))
+                + ",\"postCount\":" + posts
+                + ",\"followerCount\":" + followers
+                + ",\"followingCount\":" + following
+                + ",\"isFollowing\":" + isFollowing
+                + "}";
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String courseJson(Map<String, Object> course, boolean withSpots) {
+        if (course == null) {
+            return "null";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append('{')
+                .append("\"courseId\":").append(course.get("courseId"))
+                .append(",\"memberId\":").append(q(str(course.get("memberId"))))
+                .append(",\"nickname\":").append(q(str(course.get("nickname"))))
+                .append(",\"profileImage\":").append(q(str(course.get("profileImage"))))
+                .append(",\"title\":").append(q(str(course.get("title"))))
+                .append(",\"summary\":").append(q(str(course.get("summary"))))
+                .append(",\"coverImage\":").append(q(str(course.get("coverImage"))))
+                .append(",\"regDate\":").append(q(str(course.get("regDate"))))
+                .append(",\"regAt\":").append(course.get("regAt") == null ? "null" : course.get("regAt"))
+                .append(",\"spotCount\":").append(course.get("spotCount"))
+                .append(",\"likeCount\":").append(course.get("likeCount"))
+                .append(",\"saveCount\":").append(course.get("saveCount"))
+                .append(",\"liked\":").append(Boolean.TRUE.equals(course.get("liked")))
+                .append(",\"saved\":").append(Boolean.TRUE.equals(course.get("saved")))
+                .append(",\"myCourseId\":")
+                .append(course.get("myCourseId") == null ? "null" : course.get("myCourseId"))
+                .append(",\"isPublic\":").append(Boolean.TRUE.equals(course.get("isPublic")));
+        if (withSpots && course.get("spots") instanceof List<?> spots) {
+            sb.append(",\"spots\":[");
+            for (int i = 0; i < spots.size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                Map<String, Object> spot = (Map<String, Object>) spots.get(i);
+                String pj = postJson(spot, false);
+                Object seq = spot.get("seq");
+                sb.append(pj, 0, pj.length() - 1)
+                        .append(",\"seq\":").append(seq == null ? (i + 1) : seq)
+                        .append(",\"resNm\":").append(q(str(spot.get("resNm"))))
+                        .append(",\"sido\":").append(q(str(spot.get("sido"))))
+                        .append('}');
+            }
+            sb.append(']');
+        }
+        sb.append('}');
+        return sb.toString();
+    }
+
+    private static List<Long> extractJsonLongArray(String body, String key) {
+        List<Long> out = new ArrayList<>();
+        if (body == null || key == null) {
+            return out;
+        }
+        String needle = "\"" + key + "\"";
+        int k = body.indexOf(needle);
+        if (k < 0) {
+            return out;
+        }
+        int bracket = body.indexOf('[', k + needle.length());
+        if (bracket < 0) {
+            return out;
+        }
+        int i = bracket + 1;
+        StringBuilder num = new StringBuilder();
+        while (i < body.length()) {
+            char c = body.charAt(i);
+            if (c == ']') {
+                if (!num.isEmpty()) {
+                    out.add(Long.parseLong(num.toString().trim()));
+                }
+                break;
+            }
+            if (c == ',') {
+                if (!num.isEmpty()) {
+                    out.add(Long.parseLong(num.toString().trim()));
+                    num.setLength(0);
+                }
+            } else if (Character.isDigit(c) || c == '-') {
+                num.append(c);
+            }
+            i++;
+        }
+        return out;
     }
 
     @SuppressWarnings("unchecked")

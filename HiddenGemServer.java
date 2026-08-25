@@ -122,10 +122,13 @@ public class HiddenGemServer {
         server.createContext("/api/place-detail", HiddenGemServer::handlePlaceDetail);
         server.createContext("/api/regions", HiddenGemServer::handleRegions);
         server.createContext("/api/config", HiddenGemServer::handlePublicConfig);
+        server.createContext("/api/course-route", HiddenGemServer::handleCourseRoute);
         server.createContext("/api/login", BoardApi::handleLogin);
         server.createContext("/api/register", BoardApi::handleRegister);
         server.createContext("/api/profile", BoardApi::handleProfile);
         server.createContext("/api/profile/photo", BoardApi::handleProfilePhoto);
+        server.createContext("/api/follow", BoardApi::handleFollow);
+        server.createContext("/api/courses", BoardApi::handleCourses);
         server.createContext("/api/translate", BoardApi::handleTranslate);
         server.createContext("/api/upload", BoardApi::handleUpload);
         server.createContext("/uploads", BoardApi::handleUploads);
@@ -171,9 +174,296 @@ public class HiddenGemServer {
         }
         String kakaoJs = readProp("kakao.js.key", System.getenv("KAKAO_JS_KEY"));
         String odsay = readProp("odsay.api.key", System.getenv("ODSAY_API_KEY"));
+        String naverId = readProp("naver.client.id", System.getenv("NAVER_CLIENT_ID"));
         String body = "{\"kakaoJsKey\":" + q(kakaoJs == null ? "" : kakaoJs.trim())
-                + ",\"odsayApiKey\":" + q(odsay == null ? "" : odsay.trim()) + "}";
+                + ",\"odsayApiKey\":" + q(odsay == null ? "" : odsay.trim())
+                + ",\"naverClientId\":" + q(naverId == null ? "" : naverId.trim()) + "}";
         respond(ex, 200, "application/json; charset=utf-8", body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * 코스 장소들을 네이버 지오코딩 + Directions로 연결.
+     * body: { "spots": [ { "title","locationTitle","address","sido","resNm" }, ... ] }
+     */
+    private static void handleCourseRoute(HttpExchange ex) throws IOException {
+        if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+            respond(ex, 405, "application/json; charset=utf-8", jsonError("POST only").getBytes(StandardCharsets.UTF_8));
+            return;
+        }
+        try {
+            String clientId = readProp("naver.client.id", System.getenv("NAVER_CLIENT_ID"));
+            String clientSecret = readProp("naver.client.secret", System.getenv("NAVER_CLIENT_SECRET"));
+            if (clientId.isBlank() || clientSecret.isBlank()) {
+                respond(ex, 503, "application/json; charset=utf-8",
+                        jsonError("네이버 지도 API 키가 설정되지 않았습니다.").getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            String raw = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            List<Map<String, String>> spotsIn = parseCourseRouteSpots(raw);
+            if (spotsIn.isEmpty()) {
+                respond(ex, 400, "application/json; charset=utf-8",
+                        jsonError("장소가 없습니다.").getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            if (spotsIn.size() > 20) {
+                respond(ex, 400, "application/json; charset=utf-8",
+                        jsonError("장소는 20개까지입니다.").getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+
+            List<double[]> coords = new ArrayList<>();
+            StringBuilder spotsJson = new StringBuilder("[");
+            for (int i = 0; i < spotsIn.size(); i++) {
+                Map<String, String> s = spotsIn.get(i);
+                String query = buildPlaceQuery(s);
+                double[] ll = naverGeocode(clientId, clientSecret, query);
+                if (ll == null) {
+                    String placeOnly = firstNonBlank(s.get("locationTitle"), s.get("title"), s.get("resNm"));
+                    if (!placeOnly.isBlank() && !placeOnly.equals(query)) {
+                        ll = naverGeocode(clientId, clientSecret, placeOnly);
+                        if (ll != null) {
+                            query = placeOnly;
+                        }
+                    }
+                }
+                String title = firstNonBlank(
+                        s.get("locationTitle"), s.get("title"), s.get("resNm"), "장소 " + (i + 1));
+                if (i > 0) {
+                    spotsJson.append(',');
+                }
+                if (ll == null) {
+                    spotsJson.append("{\"seq\":").append(i + 1)
+                            .append(",\"title\":").append(q(title))
+                            .append(",\"query\":").append(q(query))
+                            .append(",\"found\":false}");
+                    coords.add(null);
+                } else {
+                    spotsJson.append("{\"seq\":").append(i + 1)
+                            .append(",\"title\":").append(q(title))
+                            .append(",\"query\":").append(q(query))
+                            .append(",\"found\":true")
+                            .append(",\"lat\":").append(ll[0])
+                            .append(",\"lng\":").append(ll[1])
+                            .append('}');
+                    coords.add(ll);
+                }
+            }
+            spotsJson.append(']');
+
+            List<double[]> path = buildDrivingPath(clientId, clientSecret, coords);
+            StringBuilder pathJson = new StringBuilder("[");
+            for (int i = 0; i < path.size(); i++) {
+                if (i > 0) {
+                    pathJson.append(',');
+                }
+                pathJson.append('[').append(path.get(i)[0]).append(',').append(path.get(i)[1]).append(']');
+            }
+            pathJson.append(']');
+
+            String body = "{\"spots\":" + spotsJson + ",\"path\":" + pathJson + "}";
+            respond(ex, 200, "application/json; charset=utf-8", body.getBytes(StandardCharsets.UTF_8));
+        } catch (IllegalArgumentException e) {
+            respond(ex, 400, "application/json; charset=utf-8",
+                    jsonError(e.getMessage()).getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            respond(ex, 502, "application/json; charset=utf-8",
+                    jsonError(e.getMessage() == null ? "경로 계산 실패" : e.getMessage())
+                            .getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /** 게시글: 지역(address/sido) + 장소명 / AI: sido + resNm */
+    private static String buildPlaceQuery(Map<String, String> s) {
+        String region = firstNonBlank(s.get("address"), s.get("sido"));
+        String place = firstNonBlank(s.get("locationTitle"), s.get("title"), s.get("resNm"));
+        if (!region.isBlank() && !place.isBlank()) {
+            // "서울특별시 광장시장"처럼 지역+장소명
+            if (place.contains(region) || region.contains(place)) {
+                return place;
+            }
+            return region + " " + place;
+        }
+        return firstNonBlank(place, region);
+    }
+
+    private static List<Map<String, String>> parseCourseRouteSpots(String raw) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (raw == null || raw.isBlank()) {
+            return out;
+        }
+        int arr = raw.indexOf("\"spots\"");
+        if (arr < 0) {
+            return out;
+        }
+        int bracket = raw.indexOf('[', arr);
+        if (bracket < 0) {
+            return out;
+        }
+        int depth = 0;
+        int objStart = -1;
+        for (int i = bracket; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+                if (depth == 0) {
+                    break;
+                }
+            } else if (c == '{' && depth == 1) {
+                objStart = i;
+            } else if (c == '}' && depth == 1 && objStart >= 0) {
+                out.add(parseJsonObjectFields(raw.substring(objStart, i + 1)));
+                objStart = -1;
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, String> parseJsonObjectFields(String obj) {
+        Map<String, String> map = new HashMap<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("\"(\\w+)\"\\s*:\\s*(\"(?:\\\\.|[^\"\\\\])*\"|null|true|false|-?\\d+(?:\\.\\d+)?)")
+                .matcher(obj);
+        while (m.find()) {
+            String key = m.group(1);
+            String raw = m.group(2);
+            if (raw.startsWith("\"")) {
+                String v = raw.substring(1, raw.length() - 1)
+                        .replace("\\\"", "\"")
+                        .replace("\\n", "\n")
+                        .replace("\\\\", "\\");
+                map.put(key, v);
+            } else if (!"null".equals(raw)) {
+                map.put(key, raw);
+            }
+        }
+        return map;
+    }
+
+    /** @return [lat, lng] or null */
+    private static double[] naverGeocode(String clientId, String clientSecret, String query) throws Exception {
+        if (query == null || query.isBlank()) {
+            return null;
+        }
+        String url = "https://maps.apigw.ntruss.com/map-geocode/v2/geocode?query="
+                + enc(query.trim());
+        String body = httpGetNaver(url, clientId, clientSecret);
+        // "x":"126.97..." "y":"37.56..."  (x=lng, y=lat)
+        java.util.regex.Matcher mx = java.util.regex.Pattern.compile("\"x\"\\s*:\\s*\"([^\"]+)\"").matcher(body);
+        java.util.regex.Matcher my = java.util.regex.Pattern.compile("\"y\"\\s*:\\s*\"([^\"]+)\"").matcher(body);
+        if (mx.find() && my.find()) {
+            double lng = Double.parseDouble(mx.group(1));
+            double lat = Double.parseDouble(my.group(1));
+            if (Double.isFinite(lat) && Double.isFinite(lng)) {
+                return new double[]{lat, lng};
+            }
+        }
+        return null;
+    }
+
+    /** 연속 구간 Directions → 실패 시 직선 연결 */
+    private static List<double[]> buildDrivingPath(String clientId, String clientSecret, List<double[]> coords)
+            throws Exception {
+        List<double[]> found = new ArrayList<>();
+        for (double[] c : coords) {
+            if (c != null) {
+                found.add(c);
+            }
+        }
+        if (found.size() < 2) {
+            return found;
+        }
+        List<double[]> path = new ArrayList<>();
+        for (int i = 0; i < found.size() - 1; i++) {
+            double[] a = found.get(i);
+            double[] b = found.get(i + 1);
+            List<double[]> seg = naverDriving(clientId, clientSecret, a, b);
+            if (seg.isEmpty()) {
+                if (path.isEmpty()) {
+                    path.add(a);
+                }
+                path.add(b);
+            } else {
+                if (!path.isEmpty() && approxSame(path.get(path.size() - 1), seg.get(0))) {
+                    path.addAll(seg.subList(1, seg.size()));
+                } else {
+                    path.addAll(seg);
+                }
+            }
+        }
+        return path;
+    }
+
+    private static boolean approxSame(double[] a, double[] b) {
+        return Math.abs(a[0] - b[0]) < 1e-5 && Math.abs(a[1] - b[1]) < 1e-5;
+    }
+
+    private static List<double[]> naverDriving(String clientId, String clientSecret, double[] from, double[] to)
+            throws Exception {
+        // start/goal = lng,lat
+        String url = "https://maps.apigw.ntruss.com/map-direction/v1/driving?start="
+                + from[1] + "," + from[0]
+                + "&goal=" + to[1] + "," + to[0]
+                + "&option=traoptimal";
+        String body = httpGetNaver(url, clientId, clientSecret);
+        List<double[]> path = new ArrayList<>();
+        // "path":[[lng,lat],[lng,lat],...]
+        int pathKey = body.indexOf("\"path\"");
+        if (pathKey < 0) {
+            return path;
+        }
+        int bracket = body.indexOf('[', pathKey);
+        if (bracket < 0) {
+            return path;
+        }
+        int depth = 0;
+        int end = -1;
+        for (int i = bracket; i < body.length(); i++) {
+            char c = body.charAt(i);
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+                if (depth == 0) {
+                    end = i;
+                    break;
+                }
+            }
+        }
+        if (end < 0) {
+            return path;
+        }
+        java.util.regex.Matcher pair = java.util.regex.Pattern
+                .compile("\\[\\s*(-?\\d+(?:\\.\\d+)?)\\s*,\\s*(-?\\d+(?:\\.\\d+)?)\\s*\\]")
+                .matcher(body.substring(bracket, end + 1));
+        while (pair.find()) {
+            double lng = Double.parseDouble(pair.group(1));
+            double lat = Double.parseDouble(pair.group(2));
+            path.add(new double[]{lat, lng});
+        }
+        return path;
+    }
+
+    private static String httpGetNaver(String urlString, String clientId, String clientSecret) throws Exception {
+        URL url = URI.create(urlString).toURL();
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("GET");
+        conn.setConnectTimeout(12_000);
+        conn.setReadTimeout(20_000);
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("X-NCP-APIGW-API-KEY-ID", clientId);
+        conn.setRequestProperty("X-NCP-APIGW-API-KEY", clientSecret);
+        conn.setRequestProperty("User-Agent", "HiddenGem/1.0");
+        int code = conn.getResponseCode();
+        InputStream is = (code >= 200 && code <= 299) ? conn.getInputStream() : conn.getErrorStream();
+        String body = readStream(is);
+        conn.disconnect();
+        if (code < 200 || code > 299) {
+            throw new IllegalStateException("네이버 API HTTP " + code
+                    + (body.isBlank() ? "" : ": " + body.substring(0, Math.min(160, body.length()))));
+        }
+        return body;
     }
 
     private static String readProp(String key, String envFallback) {
