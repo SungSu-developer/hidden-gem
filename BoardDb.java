@@ -73,6 +73,102 @@ public final class BoardDb {
             } catch (SQLException e) {
                 System.err.println("Member.profile_image 확장: " + e.getMessage());
             }
+            try (Statement st = conn.createStatement()) {
+                st.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS MemberFollow (
+                          follower_id VARCHAR(40) NOT NULL,
+                          following_id VARCHAR(40) NOT NULL,
+                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                          PRIMARY KEY (follower_id, following_id)
+                        )
+                        """);
+            } catch (SQLException e) {
+                System.err.println("MemberFollow 확인: " + e.getMessage());
+            }
+            try (Statement st = conn.createStatement()) {
+                st.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS TravelCourse (
+                          course_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                          member_id VARCHAR(40) NOT NULL,
+                          title VARCHAR(200) NOT NULL,
+                          summary VARCHAR(500),
+                          cover_image VARCHAR(500),
+                          reg_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                        """);
+            } catch (SQLException e) {
+                System.err.println("TravelCourse 확인: " + e.getMessage());
+            }
+            try (Statement st = conn.createStatement()) {
+                st.executeUpdate("ALTER TABLE TravelCourse ADD COLUMN is_public TINYINT(1) NOT NULL DEFAULT 0");
+            } catch (SQLException e) {
+                /* duplicate column */
+            }
+            try (Statement st = conn.createStatement()) {
+                st.executeUpdate("ALTER TABLE TravelCourse ADD COLUMN source_course_id BIGINT NULL");
+            } catch (SQLException e) {
+                /* duplicate column */
+            }
+            try (Statement st = conn.createStatement()) {
+                st.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS CourseSpot (
+                          course_id BIGINT NOT NULL,
+                          seq_no INT NOT NULL,
+                          post_id BIGINT NULL,
+                          title VARCHAR(200),
+                          address VARCHAR(200),
+                          image_url VARCHAR(500),
+                          note VARCHAR(500),
+                          res_nm VARCHAR(200),
+                          sido VARCHAR(100),
+                          PRIMARY KEY (course_id, seq_no)
+                        )
+                        """);
+            } catch (SQLException e) {
+                System.err.println("CourseSpot 확인: " + e.getMessage());
+            }
+            try (Statement st = conn.createStatement()) {
+                st.executeUpdate("ALTER TABLE CourseSpot MODIFY COLUMN post_id BIGINT NULL");
+            } catch (SQLException e) {
+                /* ignore */
+            }
+            for (String col : List.of(
+                    "title VARCHAR(200)",
+                    "address VARCHAR(200)",
+                    "image_url VARCHAR(500)",
+                    "note VARCHAR(500)",
+                    "res_nm VARCHAR(200)",
+                    "sido VARCHAR(100)")) {
+                try (Statement st = conn.createStatement()) {
+                    st.executeUpdate("ALTER TABLE CourseSpot ADD COLUMN " + col);
+                } catch (SQLException e) {
+                    /* duplicate column */
+                }
+            }
+            try (Statement st = conn.createStatement()) {
+                st.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS CourseSave (
+                          member_id VARCHAR(40) NOT NULL,
+                          course_id BIGINT NOT NULL,
+                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                          PRIMARY KEY (member_id, course_id)
+                        )
+                        """);
+            } catch (SQLException e) {
+                System.err.println("CourseSave 확인: " + e.getMessage());
+            }
+            try (Statement st = conn.createStatement()) {
+                st.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS CourseLike (
+                          member_id VARCHAR(40) NOT NULL,
+                          course_id BIGINT NOT NULL,
+                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                          PRIMARY KEY (member_id, course_id)
+                        )
+                        """);
+            } catch (SQLException e) {
+                System.err.println("CourseLike 확인: " + e.getMessage());
+            }
             schemaReady = true;
         }
     }
@@ -122,12 +218,12 @@ public final class BoardDb {
                 ps.setString(2, password);
                 ps.setString(3, nick);
                 ps.executeUpdate();
-            }
-            Map<String, String> out = new LinkedHashMap<>();
+                }
+                Map<String, String> out = new LinkedHashMap<>();
             out.put("memberId", id);
             out.put("nickname", nick);
             out.put("profileImage", "");
-            return out;
+                return out;
         }
     }
 
@@ -216,12 +312,12 @@ public final class BoardDb {
     private static final String POST_SELECT = """
             SELECT p.post_id, p.member_id, p.content, p.reg_date, p.category,
                    m.nickname, m.profile_image,
-                   l.location_id, l.title AS location_title, l.address, l.image_url,
-                   (SELECT COUNT(*) FROM Recommendation r WHERE r.post_id = p.post_id) AS recommend_count,
-                   (SELECT COUNT(*) FROM Reply rp WHERE rp.post_id = p.post_id) AS reply_count
-            FROM Post p
-            JOIN Member m ON m.member_id = p.member_id
-            LEFT JOIN Location l ON l.location_id = p.location_id
+                       l.location_id, l.title AS location_title, l.address, l.image_url,
+                       (SELECT COUNT(*) FROM Recommendation r WHERE r.post_id = p.post_id) AS recommend_count,
+                       (SELECT COUNT(*) FROM Reply rp WHERE rp.post_id = p.post_id) AS reply_count
+                FROM Post p
+                JOIN Member m ON m.member_id = p.member_id
+                LEFT JOIN Location l ON l.location_id = p.location_id
             """;
 
     public static List<Map<String, Object>> listPosts(String viewerId, String category) throws Exception {
@@ -302,12 +398,12 @@ public final class BoardDb {
              PreparedStatement ps = conn.prepareStatement(sql)) {
             binder.bind(ps);
             try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    Map<String, Object> row = postRow(rs);
-                    long postId = ((Number) row.get("postId")).longValue();
-                    row.put("recommended", viewerId != null && !viewerId.isBlank()
-                            && hasRecommendation(conn, viewerId, postId));
-                    list.add(row);
+            while (rs.next()) {
+                Map<String, Object> row = postRow(rs);
+                long postId = ((Number) row.get("postId")).longValue();
+                row.put("recommended", viewerId != null && !viewerId.isBlank()
+                        && hasRecommendation(conn, viewerId, postId));
+                list.add(row);
                 }
             }
         }
@@ -694,6 +790,888 @@ public final class BoardDb {
                     throw new IllegalArgumentException("게시글이 없습니다: " + postId);
                 }
             }
+        }
+    }
+
+    public static long countPostsByAuthor(String authorId) throws Exception {
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT COUNT(*) FROM Post WHERE member_id = ?")) {
+            ps.setString(1, authorId.trim());
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getLong(1);
+            }
+        }
+    }
+
+    public static long countFollowers(String memberId) throws Exception {
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT COUNT(*) FROM MemberFollow WHERE following_id = ?")) {
+            ps.setString(1, memberId.trim());
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getLong(1);
+            }
+        }
+    }
+
+    public static long countFollowing(String memberId) throws Exception {
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT COUNT(*) FROM MemberFollow WHERE follower_id = ?")) {
+            ps.setString(1, memberId.trim());
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getLong(1);
+            }
+        }
+    }
+
+    public static boolean isFollowing(String followerId, String followingId) throws Exception {
+        if (followerId == null || followerId.isBlank() || followingId == null || followingId.isBlank()) {
+            return false;
+        }
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT 1 FROM MemberFollow WHERE follower_id = ? AND following_id = ? LIMIT 1")) {
+            ps.setString(1, followerId.trim());
+            ps.setString(2, followingId.trim());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    /** 팔로우 토글. true = 팔로우 상태 */
+    public static boolean toggleFollow(String followerId, String followingId) throws Exception {
+        if (followerId == null || followerId.isBlank() || followingId == null || followingId.isBlank()) {
+            throw new IllegalArgumentException("회원 정보가 필요합니다.");
+        }
+        String a = followerId.trim();
+        String b = followingId.trim();
+        if (a.equals(b)) {
+            throw new IllegalArgumentException("자기 자신은 팔로우할 수 없습니다.");
+        }
+        try (Connection conn = open()) {
+            ensureMember(conn, a);
+            ensureMember(conn, b);
+            if (isFollowingConn(conn, a, b)) {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM MemberFollow WHERE follower_id = ? AND following_id = ?")) {
+                    ps.setString(1, a);
+                    ps.setString(2, b);
+                    ps.executeUpdate();
+                }
+                return false;
+            }
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "INSERT INTO MemberFollow (follower_id, following_id) VALUES (?, ?)")) {
+                ps.setString(1, a);
+                ps.setString(2, b);
+                ps.executeUpdate();
+            }
+            return true;
+        }
+    }
+
+    private static boolean isFollowingConn(Connection conn, String a, String b) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM MemberFollow WHERE follower_id = ? AND following_id = ? LIMIT 1")) {
+            ps.setString(1, a);
+            ps.setString(2, b);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    public static List<Map<String, String>> listFollowers(String memberId) throws Exception {
+        return listFollowSide(memberId, true);
+    }
+
+    public static List<Map<String, String>> listFollowing(String memberId) throws Exception {
+        return listFollowSide(memberId, false);
+    }
+
+    private static List<Map<String, String>> listFollowSide(String memberId, boolean followers)
+            throws Exception {
+        String sql = followers
+                ? """
+                  SELECT m.member_id, m.nickname, m.profile_image
+                  FROM MemberFollow f
+                  JOIN Member m ON m.member_id = f.follower_id
+                  WHERE f.following_id = ?
+                  ORDER BY f.created_at DESC
+                  """
+                : """
+                  SELECT m.member_id, m.nickname, m.profile_image
+                  FROM MemberFollow f
+                  JOIN Member m ON m.member_id = f.following_id
+                  WHERE f.follower_id = ?
+                  ORDER BY f.created_at DESC
+                  """;
+        List<Map<String, String>> out = new ArrayList<>();
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, memberId.trim());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(memberRow(rs));
+                }
+            }
+        }
+        return out;
+    }
+
+    public static List<Map<String, Object>> listCourses(String ownerId, String viewerId) throws Exception {
+        if (ownerId == null || ownerId.isBlank()) {
+            throw new IllegalArgumentException("회원 아이디가 필요합니다.");
+        }
+        String sql = """
+                SELECT c.course_id, c.member_id, c.title, c.summary, c.cover_image, c.reg_date,
+                       c.is_public,
+                       m.nickname, m.profile_image,
+                       (SELECT COUNT(*) FROM CourseSpot s WHERE s.course_id = c.course_id) AS spot_count,
+                       (SELECT COUNT(*) FROM CourseLike lk WHERE lk.course_id = c.course_id) AS like_count,
+                       (SELECT COUNT(*) FROM CourseSave sv WHERE sv.course_id = c.course_id) AS save_count
+                FROM TravelCourse c
+                JOIN Member m ON m.member_id = c.member_id
+                WHERE c.member_id = ?
+                ORDER BY c.reg_date DESC, c.course_id DESC
+                """;
+        List<Map<String, Object>> out = new ArrayList<>();
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, ownerId.trim());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(courseListRow(conn, rs, viewerId));
+                }
+            }
+        }
+        return out;
+    }
+
+    public static Map<String, Object> getCourse(long courseId, String viewerId) throws Exception {
+        String sql = """
+                SELECT c.course_id, c.member_id, c.title, c.summary, c.cover_image, c.reg_date,
+                       c.is_public,
+                       m.nickname, m.profile_image,
+                       (SELECT COUNT(*) FROM CourseSpot s WHERE s.course_id = c.course_id) AS spot_count,
+                       (SELECT COUNT(*) FROM CourseLike lk WHERE lk.course_id = c.course_id) AS like_count,
+                       (SELECT COUNT(*) FROM CourseSave sv WHERE sv.course_id = c.course_id) AS save_count
+                FROM TravelCourse c
+                JOIN Member m ON m.member_id = c.member_id
+                WHERE c.course_id = ?
+                """;
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, courseId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                Map<String, Object> course = courseListRow(conn, rs, viewerId);
+                boolean isPublic = Boolean.TRUE.equals(course.get("isPublic"));
+                String owner = nullToEmpty((String) course.get("memberId"));
+                String viewer = viewerId == null ? "" : viewerId.trim();
+                if (!isPublic && !owner.equals(viewer)) {
+                    return null;
+                }
+                course.put("spots", listCourseSpots(conn, courseId, viewerId));
+                return course;
+            }
+        }
+    }
+
+    private static Map<String, Object> courseListRow(Connection conn, ResultSet rs, String viewerId)
+            throws SQLException {
+        Map<String, Object> row = new LinkedHashMap<>();
+        long courseId = rs.getLong("course_id");
+        String memberId = rs.getString("member_id");
+        row.put("courseId", courseId);
+        row.put("memberId", memberId);
+        row.put("nickname", nullToEmpty(rs.getString("nickname")));
+        row.put("profileImage", toPublicProfileImage(memberId, rs.getString("profile_image")));
+        row.put("title", nullToEmpty(rs.getString("title")));
+        row.put("summary", nullToEmpty(rs.getString("summary")));
+        String cover = nullToEmpty(rs.getString("cover_image"));
+        if (cover.isEmpty()) {
+            cover = firstSpotImage(conn, courseId);
+        }
+        row.put("coverImage", cover);
+        row.put("regDate", formatRegDate(rs, "reg_date"));
+        row.put("regAt", readRegAtMillis(rs, "reg_date"));
+        row.put("spotCount", rs.getLong("spot_count"));
+        row.put("likeCount", rs.getLong("like_count"));
+        row.put("saveCount", rs.getLong("save_count"));
+        row.put("liked", viewerId != null && !viewerId.isBlank() && hasCourseLike(conn, viewerId, courseId));
+        Long myCourseId = null;
+        if (viewerId != null && !viewerId.isBlank()) {
+            myCourseId = findCloneBySource(conn, viewerId.trim(), courseId);
+        }
+        row.put("myCourseId", myCourseId);
+        // 내 계획으로 복사된 경우만 saved (구 CourseSave 북마크만 있으면 false → 다시 저장 가능)
+        row.put("saved", myCourseId != null);
+        boolean isPublic = false;
+        try {
+            isPublic = rs.getInt("is_public") == 1;
+        } catch (SQLException ignored) {
+            /* older schema */
+        }
+        row.put("isPublic", isPublic);
+        return row;
+    }
+
+    public static List<Map<String, Object>> listPublicCourses(String viewerId, int limit) throws Exception {
+        int lim = Math.max(1, Math.min(limit <= 0 ? 50 : limit, 100));
+        String sql = """
+                SELECT c.course_id, c.member_id, c.title, c.summary, c.cover_image, c.reg_date,
+                       c.is_public,
+                       m.nickname, m.profile_image,
+                       (SELECT COUNT(*) FROM CourseSpot s WHERE s.course_id = c.course_id) AS spot_count,
+                       (SELECT COUNT(*) FROM CourseLike lk WHERE lk.course_id = c.course_id) AS like_count,
+                       (SELECT COUNT(*) FROM CourseSave sv WHERE sv.course_id = c.course_id) AS save_count
+                FROM TravelCourse c
+                JOIN Member m ON m.member_id = c.member_id
+                WHERE c.is_public = 1
+                ORDER BY c.reg_date DESC, c.course_id DESC
+                LIMIT ?
+                """;
+        List<Map<String, Object>> out = new ArrayList<>();
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, lim);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(courseListRow(conn, rs, viewerId));
+                }
+            }
+        }
+        return out;
+    }
+
+    public static boolean setCoursePublic(long courseId, String memberId, boolean isPublic) throws Exception {
+        try (Connection conn = open()) {
+            String owner = courseOwner(conn, courseId);
+            if (owner == null) {
+                throw new IllegalArgumentException("코스를 찾을 수 없습니다.");
+            }
+            if (!owner.equals(memberId == null ? "" : memberId.trim())) {
+                throw new IllegalArgumentException("본인 코스만 공유할 수 있습니다.");
+            }
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE TravelCourse SET is_public = ? WHERE course_id = ?")) {
+                ps.setInt(1, isPublic ? 1 : 0);
+                ps.setLong(2, courseId);
+                ps.executeUpdate();
+            }
+            return isPublic;
+        }
+    }
+
+    private static String firstSpotImage(Connection conn, long courseId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT l.image_url
+                FROM CourseSpot s
+                JOIN Post p ON p.post_id = s.post_id
+                LEFT JOIN Location l ON l.location_id = p.location_id
+                WHERE s.course_id = ?
+                ORDER BY s.seq_no ASC
+                LIMIT 1
+                """)) {
+            ps.setLong(1, courseId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return nullToEmpty(rs.getString("image_url"));
+                }
+            }
+        }
+        return "";
+    }
+
+    private static List<Map<String, Object>> listCourseSpots(Connection conn, long courseId, String viewerId)
+            throws SQLException {
+        String sql = """
+                SELECT s.seq_no, s.post_id, s.title AS spot_title, s.address AS spot_address,
+                       s.image_url AS spot_image, s.note AS spot_note, s.res_nm, s.sido,
+                       p.post_id AS p_post_id, p.member_id, p.content, p.reg_date, p.category,
+                       m.nickname, m.profile_image,
+                       l.location_id, l.title AS location_title, l.address, l.image_url,
+                       (SELECT COUNT(*) FROM Recommendation r WHERE r.post_id = p.post_id) AS recommend_count,
+                       (SELECT COUNT(*) FROM Reply rp WHERE rp.post_id = p.post_id) AS reply_count
+                FROM CourseSpot s
+                LEFT JOIN Post p ON p.post_id = s.post_id
+                LEFT JOIN Member m ON m.member_id = p.member_id
+                LEFT JOIN Location l ON l.location_id = p.location_id
+                WHERE s.course_id = ?
+                ORDER BY s.seq_no ASC
+                """;
+        List<Map<String, Object>> spots = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, courseId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> spot = new LinkedHashMap<>();
+                    int seq = rs.getInt("seq_no");
+                    spot.put("seq", seq);
+                    long postId = rs.getLong("post_id");
+                    boolean hasPost = !rs.wasNull() && postId > 0;
+                    if (hasPost) {
+                        spot.put("postId", postId);
+                        spot.put("memberId", nullToEmpty(rs.getString("member_id")));
+                        spot.put("nickname", nullToEmpty(rs.getString("nickname")));
+                        spot.put("profileImage",
+                                toPublicProfileImage(rs.getString("member_id"), rs.getString("profile_image")));
+                        spot.put("content", nullToEmpty(rs.getString("content")));
+                        spot.put("locationTitle", nullToEmpty(rs.getString("location_title")));
+                        spot.put("address", nullToEmpty(rs.getString("address")));
+                        spot.put("imageUrl", nullToEmpty(rs.getString("image_url")));
+                        spot.put("recommendCount", rs.getLong("recommend_count"));
+                        if (viewerId != null && !viewerId.isBlank()) {
+                            spot.put("recommended", hasRecommendation(conn, viewerId.trim(), postId));
+                        } else {
+                            spot.put("recommended", false);
+                        }
+                    } else {
+                        spot.put("postId", null);
+                        spot.put("memberId", "");
+                        spot.put("nickname", "");
+                        spot.put("profileImage", "");
+                        spot.put("content", nullToEmpty(rs.getString("spot_note")));
+                        spot.put("locationTitle", nullToEmpty(rs.getString("spot_title")));
+                        spot.put("address", nullToEmpty(rs.getString("spot_address")));
+                        spot.put("imageUrl", nullToEmpty(rs.getString("spot_image")));
+                        spot.put("recommendCount", 0L);
+                        spot.put("recommended", false);
+                        spot.put("resNm", nullToEmpty(rs.getString("res_nm")));
+                        spot.put("sido", nullToEmpty(rs.getString("sido")));
+                    }
+                    spots.add(spot);
+                }
+            }
+        }
+        return spots;
+    }
+
+    private static boolean hasCourseLike(Connection conn, String memberId, long courseId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM CourseLike WHERE member_id = ? AND course_id = ? LIMIT 1")) {
+            ps.setString(1, memberId.trim());
+            ps.setLong(2, courseId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static boolean hasCourseSave(Connection conn, String memberId, long courseId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM CourseSave WHERE member_id = ? AND course_id = ? LIMIT 1")) {
+            ps.setString(1, memberId.trim());
+            ps.setLong(2, courseId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    public static long createCourse(String memberId, String title, String summary, String coverImage,
+                                    List<Long> postIds) throws Exception {
+        if (memberId == null || memberId.isBlank()) {
+            throw new IllegalArgumentException("로그인이 필요합니다.");
+        }
+        if (title == null || title.isBlank()) {
+            throw new IllegalArgumentException("코스 제목을 입력하세요.");
+        }
+        List<Long> ids = postIds == null ? List.of() : postIds;
+        if (ids.size() > 20) {
+            throw new IllegalArgumentException("장소는 20개까지 넣을 수 있습니다.");
+        }
+        try (Connection conn = open()) {
+            conn.setAutoCommit(false);
+            try {
+                ensureMember(conn, memberId.trim());
+                for (Long pid : ids) {
+                    if (pid == null) {
+                        throw new IllegalArgumentException("잘못된 게시글입니다.");
+                    }
+                    ensurePost(conn, pid);
+                }
+                long courseId;
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO TravelCourse (member_id, title, summary, cover_image) VALUES (?, ?, ?, ?)",
+                        Statement.RETURN_GENERATED_KEYS)) {
+                    ps.setString(1, memberId.trim());
+                    ps.setString(2, title.trim());
+                    ps.setString(3, summary == null || summary.isBlank() ? null : summary.trim());
+                    String cover = coverImage == null ? "" : coverImage.trim();
+                    ps.setString(4, cover.isEmpty() ? null : cover);
+                    ps.executeUpdate();
+                    try (ResultSet keys = ps.getGeneratedKeys()) {
+                        if (!keys.next()) {
+                            throw new SQLException("course id 생성 실패");
+                        }
+                        courseId = keys.getLong(1);
+                    }
+                }
+                if (!ids.isEmpty()) {
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "INSERT INTO CourseSpot (course_id, seq_no, post_id) VALUES (?, ?, ?)")) {
+                        int seq = 1;
+                        for (Long pid : ids) {
+                            ps.setLong(1, courseId);
+                            ps.setInt(2, seq++);
+                            ps.setLong(3, pid);
+                            ps.addBatch();
+                        }
+                        ps.executeBatch();
+                    }
+                }
+                conn.commit();
+                return courseId;
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    /** 게시글 또는 AI 장소를 코스에 담기 */
+    public static int addCourseSpot(
+            long courseId,
+            String memberId,
+            Long postId,
+            String title,
+            String address,
+            String imageUrl,
+            String note,
+            String resNm,
+            String sido) throws Exception {
+        try (Connection conn = open()) {
+            String owner = courseOwner(conn, courseId);
+            if (owner == null) {
+                throw new IllegalArgumentException("코스를 찾을 수 없습니다.");
+            }
+            if (!owner.equals(memberId == null ? "" : memberId.trim())) {
+                throw new IllegalArgumentException("본인 코스에만 담을 수 있습니다.");
+            }
+            int count = spotCount(conn, courseId);
+            if (count >= 20) {
+                throw new IllegalArgumentException("장소는 20개까지 넣을 수 있습니다.");
+            }
+            int nextSeq = count + 1;
+            if (postId != null && postId > 0) {
+                ensurePost(conn, postId);
+                if (hasPostInCourse(conn, courseId, postId)) {
+                    throw new IllegalArgumentException("이미 코스에 담긴 장소입니다.");
+                }
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO CourseSpot (course_id, seq_no, post_id) VALUES (?, ?, ?)")) {
+                    ps.setLong(1, courseId);
+                    ps.setInt(2, nextSeq);
+                    ps.setLong(3, postId);
+                    ps.executeUpdate();
+                }
+            } else {
+                String t = title == null ? "" : title.trim();
+                if (t.isEmpty()) {
+                    throw new IllegalArgumentException("장소명이 필요합니다.");
+                }
+                String rn = resNm == null ? "" : resNm.trim();
+                String sd = sido == null ? "" : sido.trim();
+                if (!rn.isEmpty() && hasGemInCourse(conn, courseId, rn, sd)) {
+                    throw new IllegalArgumentException("이미 코스에 담긴 장소입니다.");
+                }
+                try (PreparedStatement ps = conn.prepareStatement("""
+                        INSERT INTO CourseSpot
+                          (course_id, seq_no, post_id, title, address, image_url, note, res_nm, sido)
+                        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)
+                        """)) {
+                    ps.setLong(1, courseId);
+                    ps.setInt(2, nextSeq);
+                    ps.setString(3, t);
+                    ps.setString(4, blankToNull(address));
+                    ps.setString(5, blankToNull(imageUrl));
+                    ps.setString(6, blankToNull(note));
+                    ps.setString(7, blankToNull(resNm));
+                    ps.setString(8, blankToNull(sido));
+                    ps.executeUpdate();
+                }
+            }
+            // cover 비어 있으면 첫 이미지로
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT cover_image FROM TravelCourse WHERE course_id = ?")) {
+                ps.setLong(1, courseId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next() && (rs.getString("cover_image") == null || rs.getString("cover_image").isBlank())) {
+                        String cover = imageUrl;
+                        if (postId != null && postId > 0) {
+                            cover = firstSpotImage(conn, courseId);
+                        }
+                        if (cover != null && !cover.isBlank()) {
+                            try (PreparedStatement up = conn.prepareStatement(
+                                    "UPDATE TravelCourse SET cover_image = ? WHERE course_id = ?")) {
+                                up.setString(1, cover.trim());
+                                up.setLong(2, courseId);
+                                up.executeUpdate();
+                            }
+                        }
+                    }
+                }
+            }
+            return nextSeq;
+        }
+    }
+
+    private static int spotCount(Connection conn, long courseId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT COUNT(*) FROM CourseSpot WHERE course_id = ?")) {
+            ps.setLong(1, courseId);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getInt(1);
+            }
+        }
+    }
+
+    private static boolean hasPostInCourse(Connection conn, long courseId, long postId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM CourseSpot WHERE course_id = ? AND post_id = ? LIMIT 1")) {
+            ps.setLong(1, courseId);
+            ps.setLong(2, postId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static boolean hasGemInCourse(Connection conn, long courseId, String resNm, String sido)
+            throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM CourseSpot WHERE course_id = ? AND res_nm = ? AND COALESCE(sido,'') = ? LIMIT 1")) {
+            ps.setLong(1, courseId);
+            ps.setString(2, resNm);
+            ps.setString(3, sido);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static String blankToNull(String s) {
+        if (s == null || s.isBlank()) {
+            return null;
+        }
+        return s.trim();
+    }
+
+    public static void updateCourse(long courseId, String memberId, String title, String summary,
+                                    String coverImage, List<Long> postIds) throws Exception {
+        try (Connection conn = open()) {
+            String owner = courseOwner(conn, courseId);
+            if (owner == null) {
+                throw new IllegalArgumentException("코스를 찾을 수 없습니다.");
+            }
+            if (!owner.equals(memberId == null ? "" : memberId.trim())) {
+                throw new IllegalArgumentException("본인 코스만 수정할 수 있습니다.");
+            }
+            if (title == null || title.isBlank()) {
+                throw new IllegalArgumentException("코스 제목을 입력하세요.");
+            }
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE TravelCourse SET title = ?, summary = ?, cover_image = ? WHERE course_id = ?")) {
+                ps.setString(1, title.trim());
+                ps.setString(2, summary == null || summary.isBlank() ? null : summary.trim());
+                String cover = coverImage == null ? "" : coverImage.trim();
+                ps.setString(3, cover.isEmpty() ? null : cover);
+                ps.setLong(4, courseId);
+                ps.executeUpdate();
+            }
+            // postIds 가 오면(레거시) 전체 교체 — 없으면 제목만 수정
+            if (postIds != null && !postIds.isEmpty()) {
+                conn.setAutoCommit(false);
+                try {
+                    for (Long pid : postIds) {
+                        ensurePost(conn, pid);
+                    }
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "DELETE FROM CourseSpot WHERE course_id = ?")) {
+                        ps.setLong(1, courseId);
+                        ps.executeUpdate();
+                    }
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "INSERT INTO CourseSpot (course_id, seq_no, post_id) VALUES (?, ?, ?)")) {
+                        int seq = 1;
+                        for (Long pid : postIds) {
+                            ps.setLong(1, courseId);
+                            ps.setInt(2, seq++);
+                            ps.setLong(3, pid);
+                            ps.addBatch();
+                        }
+                        ps.executeBatch();
+                    }
+                    conn.commit();
+                } catch (Exception e) {
+                    conn.rollback();
+                    throw e;
+                } finally {
+                    conn.setAutoCommit(true);
+                }
+            }
+        }
+    }
+
+    public static void deleteCourse(long courseId, String memberId) throws Exception {
+        try (Connection conn = open()) {
+            String owner = courseOwner(conn, courseId);
+            if (owner == null) {
+                throw new IllegalArgumentException("코스를 찾을 수 없습니다.");
+            }
+            if (!owner.equals(memberId == null ? "" : memberId.trim())) {
+                throw new IllegalArgumentException("본인 코스만 삭제할 수 있습니다.");
+            }
+            try (PreparedStatement ps = conn.prepareStatement("DELETE FROM CourseSpot WHERE course_id = ?")) {
+                ps.setLong(1, courseId);
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = conn.prepareStatement("DELETE FROM CourseLike WHERE course_id = ?")) {
+                ps.setLong(1, courseId);
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = conn.prepareStatement("DELETE FROM CourseSave WHERE course_id = ?")) {
+                ps.setLong(1, courseId);
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = conn.prepareStatement("DELETE FROM TravelCourse WHERE course_id = ?")) {
+                ps.setLong(1, courseId);
+                ps.executeUpdate();
+            }
+        }
+    }
+
+    private static String courseOwner(Connection conn, long courseId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT member_id FROM TravelCourse WHERE course_id = ?")) {
+            ps.setLong(1, courseId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString("member_id") : null;
+            }
+        }
+    }
+
+    public static boolean toggleCourseLike(String memberId, long courseId) throws Exception {
+        return toggleCourseFlag(memberId, courseId, true);
+    }
+
+    public static boolean toggleCourseSave(String memberId, long courseId) throws Exception {
+        return toggleCourseFlag(memberId, courseId, false);
+    }
+
+    /**
+     * 공개 계획을 내 여행 계획으로 복사.
+     * 이미 같은 원본을 저장한 적 있으면 그 복사본을 갱신하고 id 반환.
+     */
+    public static long savePublicCourseToMine(
+            long sourceCourseId, String memberId, String titleOverride, String summaryOverride) throws Exception {
+        if (memberId == null || memberId.isBlank()) {
+            throw new IllegalArgumentException("로그인이 필요합니다.");
+        }
+        String me = memberId.trim();
+        try (Connection conn = open()) {
+            conn.setAutoCommit(false);
+            try {
+                ensureMember(conn, me);
+                String owner;
+                String srcTitle;
+                String srcSummary;
+                String srcCover;
+                boolean isPublic;
+                try (PreparedStatement ps = conn.prepareStatement("""
+                        SELECT member_id, title, summary, cover_image, COALESCE(is_public, 0) AS is_public
+                        FROM TravelCourse WHERE course_id = ?
+                        """)) {
+                    ps.setLong(1, sourceCourseId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next()) {
+                            throw new IllegalArgumentException("코스를 찾을 수 없습니다.");
+                        }
+                        owner = nullToEmpty(rs.getString("member_id"));
+                        srcTitle = nullToEmpty(rs.getString("title"));
+                        srcSummary = nullToEmpty(rs.getString("summary"));
+                        srcCover = nullToEmpty(rs.getString("cover_image"));
+                        isPublic = rs.getInt("is_public") == 1;
+                    }
+                }
+                if (me.equals(owner)) {
+                    throw new IllegalArgumentException("내가 만든 계획입니다. 내 여행 계획에서 확인하세요.");
+                }
+                if (!isPublic) {
+                    throw new IllegalArgumentException("공유된 계획만 저장할 수 있습니다.");
+                }
+
+                String title = titleOverride != null && !titleOverride.isBlank()
+                        ? titleOverride.trim()
+                        : srcTitle;
+                if (title.isBlank()) {
+                    title = "저장된 계획";
+                }
+                String summary = summaryOverride != null ? summaryOverride.trim() : srcSummary;
+                if (summary != null && summary.isBlank()) {
+                    summary = null;
+                }
+
+                Long existingId = findCloneBySource(conn, me, sourceCourseId);
+                if (existingId != null) {
+                    try (PreparedStatement up = conn.prepareStatement(
+                            "UPDATE TravelCourse SET title = ?, summary = ? WHERE course_id = ? AND member_id = ?")) {
+                        up.setString(1, title);
+                        up.setString(2, summary);
+                        up.setLong(3, existingId);
+                        up.setString(4, me);
+                        up.executeUpdate();
+                    }
+                    ensureCourseSave(conn, me, sourceCourseId);
+                    conn.commit();
+                    return existingId;
+                }
+
+                long newId;
+                try (PreparedStatement ps = conn.prepareStatement(
+                        """
+                        INSERT INTO TravelCourse (member_id, title, summary, cover_image, is_public, source_course_id)
+                        VALUES (?, ?, ?, ?, 0, ?)
+                        """,
+                        Statement.RETURN_GENERATED_KEYS)) {
+                    ps.setString(1, me);
+                    ps.setString(2, title);
+                    ps.setString(3, summary);
+                    ps.setString(4, srcCover.isBlank() ? null : srcCover);
+                    ps.setLong(5, sourceCourseId);
+                    ps.executeUpdate();
+                    try (ResultSet keys = ps.getGeneratedKeys()) {
+                        if (!keys.next()) {
+                            throw new SQLException("course id 생성 실패");
+                        }
+                        newId = keys.getLong(1);
+                    }
+                } catch (SQLException insertEx) {
+                    String msg = insertEx.getMessage() == null ? "" : insertEx.getMessage().toLowerCase();
+                    boolean schemaGap = msg.contains("unknown column")
+                            || msg.contains("source_course_id")
+                            || msg.contains("is_public");
+                    if (!schemaGap) {
+                        throw insertEx;
+                    }
+                    // source_course_id / is_public 없는 구스키마 폴백
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "INSERT INTO TravelCourse (member_id, title, summary, cover_image) VALUES (?, ?, ?, ?)",
+                            Statement.RETURN_GENERATED_KEYS)) {
+                        ps.setString(1, me);
+                        ps.setString(2, title);
+                        ps.setString(3, summary);
+                        ps.setString(4, srcCover.isBlank() ? null : srcCover);
+                        ps.executeUpdate();
+                        try (ResultSet keys = ps.getGeneratedKeys()) {
+                            if (!keys.next()) {
+                                throw new SQLException("course id 생성 실패");
+                            }
+                            newId = keys.getLong(1);
+                        }
+                    }
+                    try (PreparedStatement up = conn.prepareStatement(
+                            "UPDATE TravelCourse SET is_public = 0, source_course_id = ? WHERE course_id = ?")) {
+                        up.setLong(1, sourceCourseId);
+                        up.setLong(2, newId);
+                        up.executeUpdate();
+                    } catch (SQLException ignored) {
+                        /* columns may still be missing */
+                    }
+                }
+
+                try (PreparedStatement ps = conn.prepareStatement("""
+                        INSERT INTO CourseSpot
+                          (course_id, seq_no, post_id, title, address, image_url, note, res_nm, sido)
+                        SELECT ?, seq_no, post_id, title, address, image_url, note, res_nm, sido
+                        FROM CourseSpot WHERE course_id = ?
+                        ORDER BY seq_no ASC
+                        """)) {
+                    ps.setLong(1, newId);
+                    ps.setLong(2, sourceCourseId);
+                    ps.executeUpdate();
+                }
+                ensureCourseSave(conn, me, sourceCourseId);
+                conn.commit();
+                return newId;
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    private static Long findCloneBySource(Connection conn, String memberId, long sourceCourseId)
+            throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT course_id FROM TravelCourse WHERE member_id = ? AND source_course_id = ? LIMIT 1")) {
+            ps.setString(1, memberId);
+            ps.setLong(2, sourceCourseId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+            }
+        } catch (SQLException e) {
+            /* source_course_id 없을 수 있음 */
+        }
+        return null;
+    }
+
+    private static void ensureCourseSave(Connection conn, String memberId, long courseId) throws SQLException {
+        if (hasCourseSave(conn, memberId, courseId)) {
+            return;
+        }
+        try (PreparedStatement ps = conn.prepareStatement(
+                "INSERT INTO CourseSave (member_id, course_id) VALUES (?, ?)")) {
+            ps.setString(1, memberId);
+            ps.setLong(2, courseId);
+            ps.executeUpdate();
+        }
+    }
+
+    private static boolean toggleCourseFlag(String memberId, long courseId, boolean like) throws Exception {
+        if (memberId == null || memberId.isBlank()) {
+            throw new IllegalArgumentException("로그인이 필요합니다.");
+        }
+        String table = like ? "CourseLike" : "CourseSave";
+        try (Connection conn = open()) {
+            ensureMember(conn, memberId.trim());
+            if (courseOwner(conn, courseId) == null) {
+                throw new IllegalArgumentException("코스를 찾을 수 없습니다.");
+            }
+            boolean on = like ? hasCourseLike(conn, memberId, courseId) : hasCourseSave(conn, memberId, courseId);
+            if (on) {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM " + table + " WHERE member_id = ? AND course_id = ?")) {
+                    ps.setString(1, memberId.trim());
+                    ps.setLong(2, courseId);
+                    ps.executeUpdate();
+                }
+                return false;
+            }
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "INSERT INTO " + table + " (member_id, course_id) VALUES (?, ?)")) {
+                ps.setString(1, memberId.trim());
+                ps.setLong(2, courseId);
+                ps.executeUpdate();
+            }
+            return true;
         }
     }
 

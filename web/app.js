@@ -8,6 +8,7 @@ const panels = {
   ai: document.getElementById("panel-ai"),
   domestic: document.getElementById("panel-domestic"),
   foreign: document.getElementById("panel-foreign"),
+  courses: document.getElementById("panel-courses"),
   my: document.getElementById("panel-my"),
 };
 
@@ -55,8 +56,9 @@ let uiLang = localStorage.getItem(LANG_STORAGE_KEY) === "en" ? "en" : "ko";
 const UI_I18N = {
   ko: {
     tabAi: "AI 추천",
-    tabDomestic: "내국인 추천",
-    tabForeign: "외국인 추천",
+    tabDomestic: "현지인 Pick",
+    tabForeign: "외국인 Pick",
+    tabCourses: "계획 공유",
     tabMy: "마이페이지",
     needLogin: "로그인이 필요합니다",
     loginJoin: "로그인",
@@ -70,6 +72,7 @@ const UI_I18N = {
     sortDomestic: "내국인 많은 순",
     myPosts: "내가 쓴 글",
     myLiked: "추천한 글",
+    myCourses: "내 여행 계획",
     translating: "번역 중…",
     foreignVisitors: "외국인",
     domesticVisitors: "내국인",
@@ -78,6 +81,7 @@ const UI_I18N = {
     tabAi: "AI Picks",
     tabDomestic: "Local Tips",
     tabForeign: "Visitor Tips",
+    tabCourses: "Shared Plans",
     tabMy: "My Page",
     needLogin: "Sign in required",
     loginJoin: "Sign in",
@@ -91,6 +95,7 @@ const UI_I18N = {
     sortDomestic: "Most local visitors",
     myPosts: "My posts",
     myLiked: "Liked",
+    myCourses: "My trips",
     translating: "Translating…",
     foreignVisitors: "Foreign",
     domesticVisitors: "Local",
@@ -113,6 +118,7 @@ function applyChromeI18n() {
     if (id === "ai") tab.textContent = t("tabAi");
     else if (id === "domestic") tab.textContent = t("tabDomestic");
     else if (id === "foreign") tab.textContent = t("tabForeign");
+    else if (id === "courses") tab.textContent = t("tabCourses");
     else if (id === "my") tab.textContent = t("tabMy");
   });
   if (!currentUser) authLabel.textContent = t("needLogin");
@@ -136,6 +142,7 @@ function applyChromeI18n() {
   document.querySelectorAll(".my-subtab").forEach((btn) => {
     if (btn.dataset.myView === "posts") btn.textContent = t("myPosts");
     if (btn.dataset.myView === "liked") btn.textContent = t("myLiked");
+    if (btn.dataset.myView === "courses") btn.textContent = t("myCourses");
   });
 }
 
@@ -318,6 +325,7 @@ function renderMyHeader() {
   const nameEl = document.getElementById("myName");
   const subEl = document.getElementById("mySub");
   const resetBtn = document.getElementById("myAvatarReset");
+  const statsEl = document.getElementById("myStats");
   if (!avatar || !nameEl || !subEl) return;
   if (currentUser) {
     const nick = currentUser.nickname || currentUser.memberId;
@@ -326,13 +334,281 @@ function renderMyHeader() {
     nameEl.textContent = nick;
     subEl.textContent = `@${currentUser.memberId}`;
     if (resetBtn) resetBtn.hidden = !currentUser.profileImage;
+    if (statsEl) statsEl.hidden = false;
   } else {
     fillAvatar(avatar, "", "?");
     avatar.classList.remove("editable");
     nameEl.textContent = "게스트";
-    subEl.textContent = "로그인하면 내 글·추천 목록을 볼 수 있어요";
+    subEl.textContent = "로그인하면 내 글·추천·여행 계획을 볼 수 있어요";
     if (resetBtn) resetBtn.hidden = true;
+    if (statsEl) statsEl.hidden = true;
   }
+}
+
+async function refreshMyProfileStats() {
+  if (!currentMemberId()) return;
+  try {
+    const qs = new URLSearchParams({
+      memberId: currentMemberId(),
+      viewerId: currentMemberId(),
+    });
+    const res = await fetch(`/api/profile?${qs}`);
+    const data = await readJsonResponse(res);
+    if (!res.ok) return;
+    const posts = document.getElementById("myStatPosts");
+    const followers = document.getElementById("myStatFollowers");
+    const following = document.getElementById("myStatFollowing");
+    if (posts) posts.textContent = String(data.postCount ?? 0);
+    if (followers) followers.textContent = String(data.followerCount ?? 0);
+    if (following) following.textContent = String(data.followingCount ?? 0);
+    if (currentUser && data.memberId) {
+      currentUser.nickname = data.nickname || currentUser.nickname;
+      currentUser.profileImage = data.profileImage || "";
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(currentUser));
+      renderMyHeader();
+      const statsEl = document.getElementById("myStats");
+      if (statsEl) statsEl.hidden = false;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function courseDateLabel(regDate, regAt) {
+  const d = formatKoreanDate(regDate || "", regAt);
+  return d || "";
+}
+
+function renderCourseList(courses, opts = {}) {
+  const listId = opts.listId || "courseListMy";
+  const el = document.getElementById(listId);
+  if (!el) return;
+  const selectedId = currentCourse?.courseId;
+  const showAuthor = !!opts.showAuthor;
+  const cards = (courses || [])
+    .map((c) => {
+      const cover = c.coverImage
+        ? `<img class="course-thumb" src="${escapeHtml(c.coverImage)}" alt="" loading="lazy">`
+        : `<div class="course-thumb course-thumb-fallback">${escapeHtml((c.title || "?").charAt(0))}</div>`;
+      const selected = Number(c.courseId) === Number(selectedId) ? " is-selected" : "";
+      const metaLeft = showAuthor
+        ? `@${escapeHtml(c.memberId || "")}`
+        : c.isPublic
+          ? "공유 중"
+          : "내 계획";
+      return `<button type="button" class="course-card${selected}" data-course-id="${c.courseId}">
+        ${cover}
+        <div class="course-card-body">
+          <div class="course-title-row">
+            <h3>${escapeHtml(c.title || "")}</h3>
+            <span class="spot-badge">${Number(c.spotCount) || 0}개 장소</span>
+          </div>
+          <p class="course-summary">${escapeHtml(c.summary || "")}</p>
+          <div class="course-meta">
+            <span>${metaLeft}</span>
+            <span>${escapeHtml(courseDateLabel(c.regDate, c.regAt))}</span>
+          </div>
+        </div>
+      </button>`;
+    })
+    .join("");
+  const footer =
+    opts.mode === "public"
+      ? ""
+      : `<button type="button" class="course-add" id="courseAddBtn">+ 새 계획 추가하기</button>`;
+  el.innerHTML = cards + footer;
+}
+
+function courseDetailTargets(ctx) {
+  if (ctx === "public") {
+    return {
+      layout: "publicCoursesLayout",
+      nav: "courseDetailNavTitlePublic",
+      moreWrap: "courseMoreWrapPublic",
+      actions: "courseDetailActionsPublic",
+      body: "courseDetailBodyPublic",
+      saveBtn: "courseSaveBtnPublic",
+      followBtn: "courseFollowBtnPublic",
+    };
+  }
+  return {
+    layout: "myCoursesLayout",
+    nav: "courseDetailNavTitle",
+    moreWrap: "courseMoreWrap",
+    actions: "courseDetailActions",
+    body: "courseDetailBody",
+    saveBtn: "courseSaveBtn",
+    followBtn: "courseFollowBtn",
+  };
+}
+
+/** @type {'my'|'public'} */
+let courseDetailCtx = "my";
+
+function clearCourseDetailPane(ctx = courseDetailCtx) {
+  if (ctx === courseDetailCtx) currentCourse = null;
+  closeCourseMoreMenu();
+  const ids = courseDetailTargets(ctx);
+  document.getElementById(ids.layout)?.classList.remove("detail-open");
+  const nav = document.getElementById(ids.nav);
+  if (nav) nav.textContent = ctx === "public" ? "계획 공유" : "여행 계획";
+  const moreWrap = document.getElementById(ids.moreWrap);
+  if (moreWrap) moreWrap.hidden = true;
+  const actions = document.getElementById(ids.actions);
+  if (actions) actions.hidden = true;
+  const body = document.getElementById(ids.body);
+  if (body) {
+    body.innerHTML = `<div class="course-detail-empty">${
+      uiLang === "en"
+        ? "Select a plan on the left"
+        : ctx === "public"
+          ? "왼쪽에서 계획을 선택하세요"
+          : "왼쪽에서 여행 계획을 선택하세요"
+    }</div>`;
+  }
+  document.querySelectorAll(`#${ctx === "public" ? "courseListPublic" : "courseListMy"} .course-card.is-selected`)
+    .forEach((el) => el.classList.remove("is-selected"));
+}
+
+function goToAiForCourse() {
+  switchTab("ai");
+}
+
+async function loadPublicCourses() {
+  const statusElBoard = document.getElementById("boardStatusCourses");
+  showStatus(statusElBoard, uiLang === "en" ? "Loading…" : "불러오는 중…", "info");
+  try {
+    const qs = new URLSearchParams({ public: "1", viewerId: currentMemberId() });
+    const res = await fetch(`/api/courses?${qs}`);
+    const data = await readJsonResponse(res);
+    if (!res.ok) throw new Error(data.error || "조회 실패");
+    hideStatus(statusElBoard);
+    renderCourseList(data.courses || [], { listId: "courseListPublic", mode: "public", showAuthor: true });
+    if (!data.courses?.length) {
+      document.getElementById("courseListPublic").innerHTML =
+        `<p class="nearby-empty">아직 공유된 계획이 없습니다.</p>`;
+    }
+    if (courseDetailCtx === "public" && currentCourse?.courseId) {
+      const still = (data.courses || []).some((c) => Number(c.courseId) === Number(currentCourse.courseId));
+      if (!still) clearCourseDetailPane("public");
+    } else if (courseDetailCtx !== "public" || !currentCourse) {
+      clearCourseDetailPane("public");
+    }
+  } catch (e) {
+    showStatus(statusElBoard, e.message || "오류", "error");
+  }
+}
+
+async function loadMyCourses() {
+  const statusElBoard = document.getElementById("boardStatusMy");
+  const listEl = document.getElementById("boardListMy");
+  const layout = document.getElementById("myCoursesLayout");
+  listEl.hidden = true;
+  if (layout) layout.hidden = false;
+  showStatus(statusElBoard, uiLang === "en" ? "Loading…" : "불러오는 중…", "info");
+  try {
+    const qs = new URLSearchParams({
+      memberId: currentMemberId(),
+      viewerId: currentMemberId(),
+    });
+    const res = await fetch(`/api/courses?${qs}`);
+    const data = await readJsonResponse(res);
+    if (!res.ok) throw new Error(data.error || "조회 실패");
+    hideStatus(statusElBoard);
+    renderCourseList(data.courses || [], { listId: "courseListMy", mode: "mine" });
+    if (courseDetailCtx === "my" && currentCourse?.courseId) {
+      const still = (data.courses || []).some((c) => Number(c.courseId) === Number(currentCourse.courseId));
+      if (still) {
+        document.querySelectorAll("#courseListMy .course-card[data-course-id]").forEach((el) => {
+          el.classList.toggle(
+            "is-selected",
+            Number(el.dataset.courseId) === Number(currentCourse.courseId)
+          );
+        });
+      } else {
+        clearCourseDetailPane("my");
+      }
+    } else {
+      clearCourseDetailPane("my");
+    }
+  } catch (e) {
+    showStatus(statusElBoard, e.message || "오류", "error");
+  }
+}
+
+async function loadMyPage() {
+  const statusElBoard = document.getElementById("boardStatusMy");
+  const listEl = document.getElementById("boardListMy");
+  const layout = document.getElementById("myCoursesLayout");
+  renderMyHeader();
+
+  if (!currentMemberId()) {
+    hideStatus(statusElBoard);
+    listEl.hidden = false;
+    if (layout) layout.hidden = true;
+    listEl.innerHTML = `<li class="empty-state">${
+      uiLang === "en"
+        ? "Sign in to see your posts, likes, and trip plans."
+        : "로그인하면 내가 쓴 글·추천·여행 계획을 볼 수 있습니다."
+    }</li>`;
+    return;
+  }
+
+  refreshMyProfileStats();
+
+  if (myView === "courses") {
+    await loadMyCourses();
+    return;
+  }
+
+  listEl.hidden = false;
+  if (layout) layout.hidden = true;
+  clearCourseDetailPane();
+
+  const qs = new URLSearchParams({ memberId: currentMemberId() });
+  if (myView === "liked") {
+    qs.set("likedBy", currentMemberId());
+  } else {
+    qs.set("author", currentMemberId());
+  }
+
+  showStatus(statusElBoard, uiLang === "en" ? "Loading…" : "불러오는 중…", "info");
+  try {
+    const res = await fetch(`/api/posts?${qs}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "조회 실패");
+    boardPosts = data.posts || [];
+    if (uiLang === "en" && boardPosts.length) {
+      showStatus(statusElBoard, t("translating"), "info");
+      try {
+        await translatePosts(boardPosts);
+      } catch (err) {
+        console.warn(err);
+      }
+    }
+    hideStatus(statusElBoard);
+    renderBoardList(listEl, boardPosts, {
+      showCategory: true,
+      emptyText:
+        myView === "liked"
+          ? uiLang === "en"
+            ? "No liked posts yet. Tap ♥ on the feed."
+            : "아직 추천한 글이 없습니다. 피드에서 ♥를 눌러 보세요."
+          : uiLang === "en"
+            ? "You have not written any posts yet."
+            : "아직 작성한 글이 없습니다. 글쓰기로 남겨 보세요.",
+    });
+  } catch (e) {
+    showStatus(statusElBoard, e.message || "오류", "error");
+  }
+}
+
+function setMyView(view) {
+  myView = view === "liked" ? "liked" : view === "courses" ? "courses" : "posts";
+  document.querySelectorAll(".my-subtab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.myView === myView);
+  });
+  loadMyPage();
 }
 
 function fillAvatar(el, url, name) {
@@ -443,6 +719,18 @@ function thumbHtml(gem) {
   return `<span class="thumb-letter">${escapeHtml(letter)}</span>`;
 }
 
+function visitorChipHtml(kind, count) {
+  const isDomestic = kind === "domestic";
+  const label = isDomestic ? t("domesticVisitors") : t("foreignVisitors");
+  const src = isDomestic ? "/local.png" : "/foreigner.png";
+  const icon = `<img class="visitor-chip-ico" src="${src}" alt="" width="11" height="10" decoding="async">`;
+  return `<span class="visitor-chip visitor-chip--${isDomestic ? "domestic" : "foreign"}">${icon}<span class="visitor-chip-text">${escapeHtml(label)} ${formatNum(count)}</span></span>`;
+}
+
+function visitorStatsHtml(gem) {
+  return `${visitorChipHtml("foreign", gem.foreignVisitors)}${visitorChipHtml("domestic", gem.domesticVisitors)}`;
+}
+
 function renderGems(gems) {
   if (!gems || gems.length === 0) {
     resultsEl.innerHTML = "";
@@ -469,7 +757,10 @@ function renderGems(gems) {
           </div>
           <div class="post-body">
             <h2 class="post-title">${escapeHtml(name)}</h2>
-            <p class="post-meta">${escapeHtml(location)} · ${t("foreignVisitors")} ${formatNum(gem.foreignVisitors)} · ${t("domesticVisitors")} ${formatNum(gem.domesticVisitors)}</p>
+            <p class="post-meta">
+              <span class="post-meta-loc">${escapeHtml(location)}</span>
+              <span class="post-meta-stats">${visitorStatsHtml(gem)}</span>
+            </p>
           </div>
         </li>`;
     })
@@ -803,11 +1094,14 @@ function runGemSearch() {
 }
 
 async function openPlaceDetail(gem) {
+  currentPlaceGem = gem;
+  currentPlaceData = null;
   placeDialog.showModal();
   const key = gemKey(gem);
   const cached = placeDetailCache.get(key);
 
   if (cached) {
+    currentPlaceData = cached;
     await maybeTranslatePlace(gem, cached);
     renderPlaceDetail(gem, cached);
     return;
@@ -818,6 +1112,7 @@ async function openPlaceDetail(gem) {
   try {
     const data = await fetchPlaceDetail(gem);
     if (gemKey(gem) === key) {
+      currentPlaceData = data;
       await maybeTranslatePlace(gem, data);
       renderPlaceDetail(gem, data);
     }
@@ -974,8 +1269,7 @@ function renderPlaceDetail(gem, data) {
           <p class="place-kicker">${escapeHtml(location || (uiLang === "en" ? "Unknown" : "위치 미상"))}</p>
           <h2 class="place-title">${escapeHtml(displayGemName(gem))}</h2>
           <div class="place-stats">
-            <span class="place-chip">${t("foreignVisitors")} ${formatNum(gem.foreignVisitors)}</span>
-            <span class="place-chip">${t("domesticVisitors")} ${formatNum(gem.domesticVisitors)}</span>
+            ${visitorStatsHtml(gem)}
           </div>
         </div>
         <p class="nearby-empty">${escapeHtml(
@@ -1023,8 +1317,7 @@ function renderPlaceDetail(gem, data) {
             : ""
         }
         <div class="place-stats">
-          <span class="place-chip">${t("foreignVisitors")} ${formatNum(gem.foreignVisitors)}</span>
-          <span class="place-chip">${t("domesticVisitors")} ${formatNum(gem.domesticVisitors)}</span>
+          ${visitorStatsHtml(gem)}
         </div>
       </header>
 
@@ -1109,7 +1402,7 @@ async function fetchPublicConfig() {
         const res = await fetch("/api/config");
         if (res.ok) {
           const data = await res.json();
-          if (data.odsayApiKey || data.kakaoJsKey) return data;
+          if (data.odsayApiKey || data.kakaoJsKey || data.naverClientId) return data;
         }
       } catch {
         /* 예전 서버는 /api/config 없음 → 정적 파일로 폴백 */
@@ -1120,7 +1413,7 @@ async function fetchPublicConfig() {
     })().catch((err) => {
       console.warn(err);
       publicConfigPromise = null;
-      return { kakaoJsKey: "", odsayApiKey: "", configMissing: true };
+      return { kakaoJsKey: "", odsayApiKey: "", naverClientId: "", configMissing: true };
     });
   }
   return publicConfigPromise;
@@ -1149,6 +1442,174 @@ function loadKakaoMapsSdk(appKey) {
     document.head.appendChild(script);
   });
   return kakaoMapsLoadPromise;
+}
+
+let naverMapsLoadPromise = null;
+
+function loadNaverMapsSdk(clientId) {
+  if (!clientId) {
+    return Promise.reject(new Error("네이버 지도 Client ID가 없습니다."));
+  }
+  if (window.naver?.maps) return Promise.resolve();
+  if (naverMapsLoadPromise) return naverMapsLoadPromise;
+  naverMapsLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(clientId)}`;
+    script.async = true;
+    script.onload = () => {
+      if (!window.naver?.maps) {
+        reject(new Error("네이버 지도 SDK 로드 실패"));
+        return;
+      }
+      resolve();
+    };
+    script.onerror = () => {
+      naverMapsLoadPromise = null;
+      reject(new Error("네이버 지도 스크립트를 불러오지 못했습니다."));
+    };
+    document.head.appendChild(script);
+  });
+  return naverMapsLoadPromise;
+}
+
+async function fetchCourseRoute(spots) {
+  const payload = {
+    spots: (spots || []).map((s) => ({
+      title: s.locationTitle || s.title || "",
+      locationTitle: s.locationTitle || "",
+      address: s.address || "",
+      sido: s.sido || "",
+      resNm: s.resNm || "",
+    })),
+  };
+  const res = await fetch("/api/course-route", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await readJsonResponse(res);
+  if (!res.ok) throw new Error(data.error || "경로를 만들지 못했습니다.");
+  return data;
+}
+
+function renderCourseNaverMap(container, route) {
+  const found = (route.spots || []).filter((s) => s.found && Number.isFinite(s.lat) && Number.isFinite(s.lng));
+  if (!found.length) {
+    throw new Error(uiLang === "en" ? "Could not locate places on the map." : "지도에 표시할 좌표를 찾지 못했습니다.");
+  }
+  const center = new naver.maps.LatLng(found[0].lat, found[0].lng);
+  const map = new naver.maps.Map(container, {
+    center,
+    zoom: 12,
+    zoomControl: true,
+    zoomControlOptions: { position: naver.maps.Position.TOP_RIGHT },
+  });
+  const bounds = new naver.maps.LatLngBounds(center, center);
+  found.forEach((s) => {
+    const pos = new naver.maps.LatLng(s.lat, s.lng);
+    bounds.extend(pos);
+    new naver.maps.Marker({
+      position: pos,
+      map,
+      title: s.title || `${s.seq}`,
+      icon: {
+        content: `<div class="course-map-pin"><span>${s.seq}</span></div>`,
+        anchor: new naver.maps.Point(14, 14),
+      },
+    });
+  });
+  const pathPts = (route.path || [])
+    .filter((p) => Array.isArray(p) && p.length >= 2)
+    .map((p) => new naver.maps.LatLng(p[0], p[1]));
+  if (pathPts.length >= 2) {
+    new naver.maps.Polyline({
+      map,
+      path: pathPts,
+      strokeColor: "#1a1a1a",
+      strokeWeight: 4,
+      strokeOpacity: 0.85,
+      strokeStyle: "solid",
+    });
+    pathPts.forEach((p) => bounds.extend(p));
+  } else if (found.length >= 2) {
+    new naver.maps.Polyline({
+      map,
+      path: found.map((s) => new naver.maps.LatLng(s.lat, s.lng)),
+      strokeColor: "#1a1a1a",
+      strokeWeight: 3,
+      strokeOpacity: 0.7,
+      strokeStyle: "shortdash",
+    });
+  }
+  if (found.length > 1 || pathPts.length > 1) {
+    map.fitBounds(bounds, { top: 40, right: 40, bottom: 40, left: 40 });
+  }
+  return map;
+}
+
+async function openCourseMap() {
+  if (!currentCourse?.spots?.length) {
+    alert(uiLang === "en" ? "No places in this course." : "코스에 장소가 없습니다.");
+    return;
+  }
+  const box = document.querySelector(
+    courseDetailCtx === "public"
+      ? "#courseDetailBodyPublic .course-map-box"
+      : "#courseDetailBody .course-map-box"
+  );
+  const status = document.getElementById(
+    courseDetailCtx === "public" ? "courseMapStatusPublic" : "courseMapStatus"
+  );
+  const canvas = document.getElementById(
+    courseDetailCtx === "public" ? "courseMapCanvasPublic" : "courseMapCanvas"
+  );
+  const btn = document.getElementById(
+    courseDetailCtx === "public" ? "courseMapBtnPublic" : "courseMapBtn"
+  );
+  if (!box || !canvas) return;
+  if (status) {
+    status.hidden = false;
+    status.textContent = uiLang === "en" ? "Building route…" : "경로 연결 중…";
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const cfg = await fetchPublicConfig();
+    if (!cfg.naverClientId) {
+      throw new Error(
+        cfg.configMissing
+          ? "서버를 재시작한 뒤 다시 시도해 주세요."
+          : "네이버 지도 Client ID가 없습니다."
+      );
+    }
+    const [route] = await Promise.all([
+      fetchCourseRoute(currentCourse.spots),
+      loadNaverMapsSdk(cfg.naverClientId),
+    ]);
+    canvas.hidden = false;
+    canvas.innerHTML = "";
+    renderCourseNaverMap(canvas, route);
+    const missed = (route.spots || []).filter((s) => !s.found).map((s) => s.title || s.query);
+    if (status) {
+      if (missed.length) {
+        status.textContent =
+          (uiLang === "en" ? "Some places not found: " : "일부 장소를 찾지 못함: ") +
+          missed.join(", ");
+      } else {
+        status.hidden = true;
+        status.textContent = "";
+      }
+    }
+    box.classList.add("is-open");
+  } catch (err) {
+    if (status) {
+      status.hidden = false;
+      status.textContent = err.message || "지도 오류";
+    } else {
+      alert(err.message || "지도 오류");
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function haversineKm(lat1, lng1, lat2, lng2) {
@@ -1683,7 +2144,17 @@ function renderOdsayTransit(data) {
   bindTransitToggles(listEl);
 }
 
-let myView = "posts"; // posts | liked
+let myView = "posts"; // posts | liked | courses
+/** @type {object|null} */
+let currentCourse = null;
+/** @type {number|null} */
+let editingCourseId = null;
+/** @type {object|null} 현재 열린 AI 장소 */
+let currentPlaceGem = null;
+/** @type {object|null} 현재 열린 AI 장소 상세 */
+let currentPlaceData = null;
+/** @type {object|null} 담기 대기 중인 장소 (새 플리 만들 때) */
+let pendingCourseSpot = null;
 
 function boardThumb(post) {
   const letter = (post.locationTitle || post.nickname || "?").charAt(0);
@@ -2016,67 +2487,6 @@ async function loadBoardPosts(tabId = activeTab) {
   }
 }
 
-async function loadMyPage() {
-  const statusElBoard = document.getElementById("boardStatusMy");
-  const listEl = document.getElementById("boardListMy");
-  renderMyHeader();
-
-  if (!currentMemberId()) {
-    hideStatus(statusElBoard);
-    listEl.innerHTML = `<li class="empty-state">${
-      uiLang === "en"
-        ? "Sign in to see your posts and liked posts."
-        : "로그인하면 내가 쓴 글과 추천한 글을 볼 수 있습니다."
-    }</li>`;
-    return;
-  }
-
-  const qs = new URLSearchParams({ memberId: currentMemberId() });
-  if (myView === "liked") {
-    qs.set("likedBy", currentMemberId());
-  } else {
-    qs.set("author", currentMemberId());
-  }
-
-  showStatus(statusElBoard, uiLang === "en" ? "Loading…" : "불러오는 중…", "info");
-  try {
-    const res = await fetch(`/api/posts?${qs}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "조회 실패");
-    boardPosts = data.posts || [];
-    if (uiLang === "en" && boardPosts.length) {
-      showStatus(statusElBoard, t("translating"), "info");
-      try {
-        await translatePosts(boardPosts);
-      } catch (err) {
-        console.warn(err);
-      }
-    }
-    hideStatus(statusElBoard);
-    renderBoardList(listEl, boardPosts, {
-      showCategory: true,
-      emptyText:
-        myView === "liked"
-          ? uiLang === "en"
-            ? "No liked posts yet. Tap ♥ on the feed."
-            : "아직 추천한 글이 없습니다. 피드에서 ♥를 눌러 보세요."
-          : uiLang === "en"
-            ? "You have not written any posts yet."
-            : "아직 작성한 글이 없습니다. 글쓰기로 남겨 보세요.",
-    });
-  } catch (e) {
-    showStatus(statusElBoard, e.message || "오류", "error");
-  }
-}
-
-function setMyView(view) {
-  myView = view === "liked" ? "liked" : "posts";
-  document.querySelectorAll(".my-subtab").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.myView === myView);
-  });
-  loadMyPage();
-}
-
 async function openDetail(postId) {
   const qs = `?memberId=${encodeURIComponent(currentMemberId())}`;
   try {
@@ -2172,6 +2582,7 @@ function switchTab(tabId) {
     tab.setAttribute("aria-selected", String(isActive));
   });
   Object.entries(panels).forEach(([id, panel]) => {
+    if (!panel) return;
     const isActive = id === tabId;
     panel.classList.toggle("active", isActive);
     panel.hidden = !isActive;
@@ -2180,6 +2591,8 @@ function switchTab(tabId) {
     loadBoardPosts(tabId);
   } else if (tabId === "my") {
     loadMyPage();
+  } else if (tabId === "courses") {
+    loadPublicCourses();
   } else if (tabId === "ai") {
     const key = aiCacheKey(sidoSelect?.value || "");
     if (aiGemsByKey.has(key)) {
@@ -2568,8 +2981,22 @@ deletePostBtn.addEventListener("click", async () => {
     alert(err.message || "삭제 실패");
   }
 });
-detailClose.addEventListener("click", () => detailDialog.close());
-placeClose.addEventListener("click", () => placeDialog.close());
+detailClose.addEventListener("click", () => {
+  endCourseTour();
+  detailDialog.close();
+});
+placeClose.addEventListener("click", () => {
+  endCourseTour();
+  placeDialog.close();
+});
+
+document.querySelectorAll(".tour-nav").forEach((btn) => {
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (btn.dataset.tourDir === "prev") courseTourPrev();
+    else courseTourNext();
+  });
+});
 
 resultsEl.addEventListener("click", (e) => {
   const li = e.target.closest(".gem-item");
@@ -2631,6 +3058,700 @@ document.querySelectorAll(".my-subtab").forEach((btn) => {
   btn.addEventListener("click", () => setMyView(btn.dataset.myView));
 });
 
+document.getElementById("courseListMy")?.addEventListener("click", (e) => {
+  const add = e.target.closest("#courseAddBtn");
+  if (add) {
+    openCourseEditor();
+    return;
+  }
+  const card = e.target.closest(".course-card[data-course-id]");
+  if (card) openCourseDetail(Number(card.dataset.courseId), "my");
+});
+
+document.getElementById("courseListPublic")?.addEventListener("click", (e) => {
+  const card = e.target.closest(".course-card[data-course-id]");
+  if (card) openCourseDetail(Number(card.dataset.courseId), "public");
+});
+
+document.getElementById("courseDetailBackPublic")?.addEventListener("click", () => {
+  clearCourseDetailPane("public");
+});
+
+document.getElementById("courseGoAiFromDetailBtn")?.addEventListener("click", () => goToAiForCourse());
+
+document.getElementById("coursePublishBtn")?.addEventListener("click", async () => {
+  closeCourseMoreMenu();
+  if (!requireLogin() || !currentCourse) return;
+  if (currentCourse.memberId !== currentMemberId()) return;
+  try {
+    const next = !currentCourse.isPublic;
+    const res = await fetch(`/api/courses/${currentCourse.courseId}/publish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memberId: currentMemberId(), public: next }),
+    });
+    const data = await readJsonResponse(res);
+    if (!res.ok) throw new Error(data.error || "공유 실패");
+    currentCourse.isPublic = !!data.isPublic;
+    const pubBtn = document.getElementById("coursePublishBtn");
+    if (pubBtn)       pubBtn.textContent = currentCourse.isPublic ? "공유 취소" : "계획 공유에 올리기";
+    alert(
+      currentCourse.isPublic
+        ? "계획 공유에 올렸습니다."
+        : "계획 공유를 취소했습니다."
+    );
+    if (activeTab === "courses") loadPublicCourses();
+  } catch (err) {
+    alert(err.message || "공유 실패");
+  }
+});
+
+document.getElementById("myStats")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".my-stat");
+  if (!btn || !currentMemberId()) return;
+  const kind = btn.dataset.stat;
+  if (kind === "followers" || kind === "following") openFollowList(kind);
+});
+
+document.getElementById("followDialogClose")?.addEventListener("click", () => {
+  document.getElementById("followDialog")?.close();
+});
+
+document.getElementById("courseCancelBtn")?.addEventListener("click", () => {
+  pendingCourseSpot = null;
+  document.getElementById("courseDialog")?.close();
+});
+
+document.getElementById("courseForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireLogin()) return;
+  const errEl = document.getElementById("courseError");
+  const title = document.getElementById("courseTitle")?.value?.trim() || "";
+  const summary = document.getElementById("courseSummary")?.value?.trim() || "";
+  if (errEl) errEl.hidden = true;
+  if (!title) {
+    if (errEl) {
+      errEl.hidden = false;
+      errEl.textContent = "제목을 입력하세요.";
+    }
+    return;
+  }
+  try {
+    const payload = {
+      memberId: currentMemberId(),
+      title,
+      summary,
+      coverImage: pendingCourseSpot?.imageUrl || "",
+      postIds: [],
+    };
+    const url = editingCourseId ? `/api/courses/${editingCourseId}` : "/api/courses";
+    const res = await fetch(url, {
+      method: editingCourseId ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readJsonResponse(res);
+    if (!res.ok) throw new Error(data.error || "저장 실패");
+    const newId = data.courseId || editingCourseId;
+    const toAdd = pendingCourseSpot;
+    const wasEdit = !!editingCourseId;
+    pendingCourseSpot = null;
+    editingCourseId = null;
+    if (toAdd && newId && !wasEdit) {
+      await addSpotToCourse(newId, toAdd);
+    }
+    document.getElementById("courseDialog")?.close();
+    myView = "courses";
+    document.querySelectorAll(".my-subtab").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.myView === myView);
+    });
+    await loadMyCourses();
+    if (newId) await openCourseDetail(newId);
+  } catch (err) {
+    if (errEl) {
+      errEl.hidden = false;
+      errEl.textContent = err.message || "저장 실패";
+    }
+  }
+});
+
+document.getElementById("addToCourseClose")?.addEventListener("click", () => {
+  document.getElementById("addToCourseDialog")?.close();
+});
+
+document.getElementById("addToCourseNew")?.addEventListener("click", () => {
+  if (!pendingCourseSpot) return;
+  document.getElementById("addToCourseDialog")?.close();
+  openCourseEditor(null, { keepPending: true });
+});
+
+document.getElementById("addToCourseList")?.addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-course-id]");
+  if (!btn || !pendingCourseSpot) return;
+  const courseId = Number(btn.dataset.courseId);
+  try {
+    await addSpotToCourse(courseId, pendingCourseSpot);
+    pendingCourseSpot = null;
+    document.getElementById("addToCourseDialog")?.close();
+    alert(uiLang === "en" ? "Added to your trip plan." : "여행 계획에 담았습니다.");
+    if (activeTab === "my" && myView === "courses") loadMyCourses();
+  } catch (err) {
+    alert(err.message || "담기 실패");
+  }
+});
+
+document.getElementById("addPlaceToCourseBtn")?.addEventListener("click", () => {
+  if (!requireLogin()) return;
+  if (!currentPlaceGem) {
+    alert("장소를 먼저 열어 주세요.");
+    return;
+  }
+  openAddToCoursePicker(spotPayloadFromPlace(currentPlaceGem, currentPlaceData));
+});
+
+document.getElementById("addPostToCourseBtn")?.addEventListener("click", () => {
+  if (!requireLogin()) return;
+  if (!currentDetail) return;
+  openAddToCoursePicker(spotPayloadFromPost(currentDetail));
+});
+
+function spotPayloadFromPlace(gem, data) {
+  const title =
+    (uiLang === "en" ? data?.titleEn || data?.title : data?.title) ||
+    displayGemName(gem) ||
+    gem.resNm ||
+    "장소";
+  const address =
+    (uiLang === "en" ? data?.addrEn || data?.addr : data?.addr) ||
+    displayGemLocation(gem) ||
+    "";
+  return {
+    title: String(title),
+    address: String(address),
+    imageUrl: data?.image || gem.thumbnail || "",
+    note: "",
+    resNm: gem.resNm || "",
+    sido: gem.sido || "",
+  };
+}
+
+function spotPayloadFromPost(post) {
+  return {
+    postId: post.postId,
+    title: post.locationTitle || post.content?.slice(0, 40) || `게시글 #${post.postId}`,
+    address: post.address || "",
+    imageUrl: post.imageUrl || "",
+    note: (post.content || "").slice(0, 200),
+    resNm: "",
+    sido: "",
+  };
+}
+
+async function openAddToCoursePicker(spot) {
+  if (!requireLogin()) return;
+  pendingCourseSpot = spot;
+  const dlg = document.getElementById("addToCourseDialog");
+  const target = document.getElementById("addToCourseTarget");
+  const list = document.getElementById("addToCourseList");
+  if (target) {
+    target.textContent =
+      (uiLang === "en" ? "Add: " : "담을 장소: ") + (spot.title || "");
+  }
+  if (list) list.innerHTML = `<li class="empty-state">${uiLang === "en" ? "Loading…" : "불러오는 중…"}</li>`;
+  dlg?.showModal();
+  try {
+    const qs = new URLSearchParams({
+      memberId: currentMemberId(),
+      viewerId: currentMemberId(),
+    });
+    const res = await fetch(`/api/courses?${qs}`);
+    const data = await readJsonResponse(res);
+    if (!res.ok) throw new Error(data.error || "조회 실패");
+    const courses = data.courses || [];
+    if (!courses.length) {
+      list.innerHTML = `<li class="empty-state">${
+        uiLang === "en"
+          ? "No trip plans yet. Create one below."
+          : "아직 여행 계획이 없습니다. 아래에서 새로 만드세요."
+      }</li>`;
+      return;
+    }
+    list.innerHTML = courses
+      .map(
+        (c) => `<li><button type="button" data-course-id="${c.courseId}">
+          <strong>${escapeHtml(c.title || "")}</strong>
+          <span>${Number(c.spotCount) || 0}${uiLang === "en" ? " spots" : "개 장소"}</span>
+        </button></li>`
+      )
+      .join("");
+  } catch (err) {
+    if (list) {
+      list.innerHTML = `<li class="empty-state">${escapeHtml(err.message || "오류")}</li>`;
+    }
+  }
+}
+
+async function addSpotToCourse(courseId, spot) {
+  const body = {
+    memberId: currentMemberId(),
+    title: spot.title || "",
+    address: spot.address || "",
+    imageUrl: spot.imageUrl || "",
+    note: spot.note || "",
+    resNm: spot.resNm || "",
+    sido: spot.sido || "",
+  };
+  if (spot.postId) body.postId = spot.postId;
+  const res = await fetch(`/api/courses/${courseId}/spots`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await readJsonResponse(res);
+  if (!res.ok) throw new Error(data.error || "담기 실패");
+  return data;
+}
+
+document.getElementById("courseDetailBack")?.addEventListener("click", () => {
+  clearCourseDetailPane();
+});
+
+function closeCourseMoreMenu() {
+  const menu = document.getElementById("courseMoreMenu");
+  const btn = document.getElementById("courseDetailMore");
+  if (menu) menu.hidden = true;
+  if (btn) btn.setAttribute("aria-expanded", "false");
+}
+
+function toggleCourseMoreMenu() {
+  const menu = document.getElementById("courseMoreMenu");
+  const btn = document.getElementById("courseDetailMore");
+  if (!menu || !btn) return;
+  const open = menu.hidden;
+  menu.hidden = !open;
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+document.getElementById("courseDetailMore")?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (!currentCourse || currentCourse.memberId !== currentMemberId()) return;
+  toggleCourseMoreMenu();
+});
+
+document.getElementById("courseEditBtn")?.addEventListener("click", () => {
+  closeCourseMoreMenu();
+  if (!currentCourse || currentCourse.memberId !== currentMemberId()) return;
+  openCourseEditor(currentCourse);
+});
+
+document.getElementById("courseDeleteBtn")?.addEventListener("click", async () => {
+  closeCourseMoreMenu();
+  if (!currentCourse || currentCourse.memberId !== currentMemberId()) return;
+  if (!confirm("이 여행 계획을 삭제할까요?")) return;
+  try {
+    const res = await fetch(`/api/courses/${currentCourse.courseId}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memberId: currentMemberId() }),
+    });
+    const data = await readJsonResponse(res);
+    if (!res.ok) throw new Error(data.error || "삭제 실패");
+    clearCourseDetailPane();
+    loadMyPage();
+  } catch (err) {
+    alert(err.message || "삭제 실패");
+  }
+});
+
+document.getElementById("courseDetailPane")?.addEventListener("click", (e) => {
+  if (!e.target.closest(".course-more-wrap")) closeCourseMoreMenu();
+});
+
+document.getElementById("courseFollowBtn")?.addEventListener("click", () => startCourseTour());
+document.getElementById("courseFollowBtnPublic")?.addEventListener("click", () => startCourseTour());
+
+document.getElementById("courseSaveBtnPublic")?.addEventListener("click", () => {
+  if (!requireLogin() || !currentCourse) return;
+  if (currentCourse.memberId === currentMemberId()) {
+    alert("내가 만든 계획입니다. 내 여행 계획에서 확인하세요.");
+    return;
+  }
+  const err = document.getElementById("saveCourseError");
+  if (err) err.hidden = true;
+  document.getElementById("saveCourseTitle").value = currentCourse.title || "";
+  document.getElementById("saveCourseSummary").value = currentCourse.summary || "";
+  document.getElementById("saveCourseDialog")?.showModal();
+});
+
+document.getElementById("saveCourseCancelBtn")?.addEventListener("click", () => {
+  document.getElementById("saveCourseDialog")?.close();
+});
+
+document.getElementById("saveCourseForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireLogin() || !currentCourse) return;
+  const title = document.getElementById("saveCourseTitle")?.value?.trim() || "";
+  const summary = document.getElementById("saveCourseSummary")?.value?.trim() || "";
+  const errEl = document.getElementById("saveCourseError");
+  const submitBtn = document.getElementById("saveCourseSubmit");
+  if (!title) {
+    if (errEl) {
+      errEl.hidden = false;
+      errEl.textContent = "제목을 입력하세요.";
+    }
+    return;
+  }
+  if (errEl) errEl.hidden = true;
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const res = await fetch(`/api/courses/${currentCourse.courseId}/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        memberId: currentMemberId(),
+        title,
+        summary,
+      }),
+    });
+    const data = await readJsonResponse(res);
+    if (!res.ok) throw new Error(data.error || "저장 실패");
+    const newCourseId = Number(data.courseId) || 0;
+    currentCourse.saved = true;
+    currentCourse.myCourseId = newCourseId || currentCourse.myCourseId;
+    if (data.saveCount != null) currentCourse.saveCount = data.saveCount;
+    document.getElementById("saveCourseDialog")?.close();
+    myView = "courses";
+    document.querySelectorAll(".my-subtab").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.myView === myView);
+    });
+    switchTab("my");
+    await loadMyCourses();
+    if (newCourseId) {
+      await openCourseDetail(newCourseId, "my");
+    }
+  } catch (err) {
+    if (errEl) {
+      errEl.hidden = false;
+      errEl.textContent = err.message || "저장 실패";
+    } else {
+      alert(err.message || "저장 실패");
+    }
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+});
+
+document.getElementById("courseDetailBodyPublic")?.addEventListener("click", (e) => {
+  const spot = e.target.closest(".course-spot");
+  if (!spot) return;
+  if (spot.dataset.postId) {
+    openDetail(Number(spot.dataset.postId));
+    return;
+  }
+  if (spot.dataset.resNm) {
+    const gem = currentGems.find(
+      (g) => g.resNm === spot.dataset.resNm && (!spot.dataset.sido || g.sido === spot.dataset.sido)
+    ) || {
+      resNm: spot.dataset.resNm,
+      sido: spot.dataset.sido || "",
+      thumbnail: "",
+    };
+    openPlaceDetail(gem);
+  }
+});
+
+document.getElementById("courseDetailBody")?.addEventListener("click", (e) => {
+  const spot = e.target.closest(".course-spot");
+  if (!spot) return;
+  if (spot.dataset.postId) {
+    openDetail(Number(spot.dataset.postId));
+    return;
+  }
+  if (spot.dataset.resNm) {
+    const gem = currentGems.find(
+      (g) => g.resNm === spot.dataset.resNm && (!spot.dataset.sido || g.sido === spot.dataset.sido)
+    ) || {
+      resNm: spot.dataset.resNm,
+      sido: spot.dataset.sido || "",
+      thumbnail: "",
+    };
+    openPlaceDetail(gem);
+  }
+});
+
+async function openFollowList(type) {
+  const dlg = document.getElementById("followDialog");
+  const title = document.getElementById("followDialogTitle");
+  const list = document.getElementById("followDialogList");
+  if (!dlg || !list) return;
+  title.textContent = type === "following" ? "팔로잉" : "팔로워";
+  list.innerHTML = `<li class="empty-state">불러오는 중…</li>`;
+  dlg.showModal();
+  try {
+    const qs = new URLSearchParams({ memberId: currentMemberId(), type });
+    const res = await fetch(`/api/follow/list?${qs}`);
+    const data = await readJsonResponse(res);
+    if (!res.ok) throw new Error(data.error || "조회 실패");
+    const members = data.members || [];
+    if (!members.length) {
+      list.innerHTML = `<li class="empty-state">${type === "following" ? "아직 팔로잉이 없습니다." : "아직 팔로워가 없습니다."}</li>`;
+      return;
+    }
+    list.innerHTML = members
+      .map((m) => {
+        const letter = (m.nickname || m.memberId || "?").charAt(0);
+        const av = m.profileImage
+          ? `<img src="${escapeHtml(m.profileImage)}" alt="">`
+          : escapeHtml(letter);
+        return `<li><span class="av">${av}</span><div><strong>${escapeHtml(m.nickname || m.memberId)}</strong><div class="muted">@${escapeHtml(m.memberId)}</div></div></li>`;
+      })
+      .join("");
+  } catch (err) {
+    list.innerHTML = `<li class="empty-state">${escapeHtml(err.message || "오류")}</li>`;
+  }
+}
+
+async function openCourseEditor(course, opts = {}) {
+  if (!requireLogin()) return;
+  if (!opts.keepPending) pendingCourseSpot = null;
+  editingCourseId = course?.courseId || null;
+  document.getElementById("courseFormTitle").textContent = editingCourseId
+    ? "여행 계획 수정"
+    : "새 여행 계획";
+  document.getElementById("courseSubmit").textContent = editingCourseId ? "저장" : "만들기";
+  document.getElementById("courseTitle").value = course?.title || "";
+  document.getElementById("courseSummary").value = course?.summary || "";
+  document.getElementById("courseError").hidden = true;
+  document.getElementById("courseDialog").showModal();
+}
+
+async function openCourseDetail(courseId, ctx = "my") {
+  try {
+    courseDetailCtx = ctx === "public" ? "public" : "my";
+    const qs = new URLSearchParams({ memberId: currentMemberId() });
+    const res = await fetch(`/api/courses/${courseId}?${qs}`);
+    const data = await readJsonResponse(res);
+    if (!res.ok) throw new Error(data.error || "조회 실패");
+    currentCourse = data;
+    const ids = courseDetailTargets(courseDetailCtx);
+
+    const layout = document.getElementById(ids.layout);
+    if (layout) {
+      layout.hidden = false;
+      layout.classList.add("detail-open");
+    }
+
+    const nav = document.getElementById(ids.nav);
+    if (nav) nav.textContent = data.title || (courseDetailCtx === "public" ? "계획 공유" : "여행 계획");
+    const moreWrap = document.getElementById(ids.moreWrap);
+    if (moreWrap) moreWrap.hidden = data.memberId !== currentMemberId();
+    closeCourseMoreMenu();
+    const pubBtn = document.getElementById("coursePublishBtn");
+    if (pubBtn) {
+      pubBtn.textContent = data.isPublic ? "공유 취소" : "계획 공유에 올리기";
+    }
+    const actions = document.getElementById(ids.actions);
+    if (actions) actions.hidden = false;
+    const saveBtn = document.getElementById(ids.saveBtn);
+    if (saveBtn) {
+      const isMine = data.memberId === currentMemberId();
+      const alreadyMine = !!(data.myCourseId || data.saved);
+      saveBtn.hidden = isMine;
+      if (alreadyMine) {
+        saveBtn.textContent = "내 계획에 저장됨";
+        saveBtn.disabled = true;
+      } else {
+        saveBtn.textContent = "계획 저장";
+        saveBtn.disabled = false;
+      }
+    }
+
+    const listSel = courseDetailCtx === "public" ? "#courseListPublic" : "#courseListMy";
+    document.querySelectorAll(`${listSel} .course-card[data-course-id]`).forEach((el) => {
+      el.classList.toggle("is-selected", Number(el.dataset.courseId) === Number(courseId));
+    });
+
+    const cover = data.coverImage
+      ? `style="background-image:linear-gradient(0deg,rgba(0,0,0,.55),rgba(0,0,0,.45)),url('${escapeHtml(data.coverImage)}')"`
+      : "";
+    const letter = (data.nickname || data.memberId || "?").charAt(0);
+    const av = data.profileImage
+      ? `<img src="${escapeHtml(data.profileImage)}" alt="">`
+      : escapeHtml(letter);
+    const spots = (data.spots || [])
+      .map((s, i) => {
+        const seq = s.seq || i + 1;
+        const title = s.locationTitle || "장소";
+        const thumb = s.imageUrl
+          ? `<img class="course-spot-thumb" src="${escapeHtml(s.imageUrl)}" alt="">`
+          : `<div class="course-spot-thumb course-thumb-fallback">${escapeHtml(title.charAt(0))}</div>`;
+        const addr = (s.address || "").split(/\s+/).slice(0, 2).join(" ") || "";
+        const postAttr = s.postId ? `data-post-id="${s.postId}"` : "";
+        const gemAttr =
+          !s.postId && s.resNm
+            ? `data-res-nm="${escapeHtml(s.resNm)}" data-sido="${escapeHtml(s.sido || "")}"`
+            : "";
+        const author = s.memberId
+          ? `@${escapeHtml(s.memberId)}`
+          : uiLang === "en"
+            ? "AI pick"
+            : "AI 추천";
+        return `<button type="button" class="course-spot" ${postAttr} ${gemAttr}>
+          <div class="course-spot-left"><span class="course-seq">${seq}</span>${thumb}</div>
+          <div class="course-spot-body">
+            <div class="course-spot-title-row">
+              <strong>${escapeHtml(title)}</strong>
+              ${addr ? `<span class="loc-tag">${escapeHtml(addr)}</span>` : ""}
+            </div>
+            <p class="course-spot-note">${escapeHtml(s.content || "")}</p>
+            <div class="course-spot-meta">
+              <span>${author}</span>
+              <span>♥ ${Number(s.recommendCount) || 0}</span>
+            </div>
+          </div>
+        </button>`;
+      })
+      .join("");
+    const mapId = courseDetailCtx === "public" ? "courseMapBtnPublic" : "courseMapBtn";
+    const statusId = courseDetailCtx === "public" ? "courseMapStatusPublic" : "courseMapStatus";
+    const canvasId = courseDetailCtx === "public" ? "courseMapCanvasPublic" : "courseMapCanvas";
+    const likeId = courseDetailCtx === "public" ? "courseLikeBtnPublic" : "courseLikeBtn";
+    const likedOn = !!data.liked;
+    document.getElementById(ids.body).innerHTML = `
+      <div class="course-hero" ${cover}>
+        <span class="course-hero-pill">${data.isPublic ? "SHARED COURSE" : "LOCAL COURSE"}</span>
+        <h3>${escapeHtml(data.title || "")}</h3>
+        <p>${escapeHtml(data.summary || "")}</p>
+        <div class="course-hero-author"><span class="course-hero-avatar">${av}</span>
+          ${escapeHtml(data.nickname || data.memberId)} · @${escapeHtml(data.memberId || "")}</div>
+      </div>
+      <div class="course-stats-bar">
+        <span>${Number(data.spotCount) || 0} 스팟</span>
+        <button type="button" class="course-like-btn${likedOn ? " is-on" : ""}" id="${likeId}" aria-pressed="${likedOn}">
+          ♥ 좋아요 <strong id="${likeId}Count">${Number(data.likeCount) || 0}</strong>
+        </button>
+        <span>저장 ${Number(data.saveCount) || 0}</span>
+        <span class="muted">${escapeHtml(courseDateLabel(data.regDate, data.regAt))} 생성</span>
+      </div>
+      <div class="course-spots">
+        <h4>방문하는 장소 리스트</h4>
+        ${spots || `<p class="nearby-empty">장소가 없습니다. AI 추천에서 담아 보세요.</p>`}
+      </div>
+      <div class="course-map-box">
+        <p class="course-map-label">지도로 코스 동선 확인</p>
+        <button type="button" id="${mapId}">코스 지도 보기</button>
+        <p id="${statusId}" class="course-map-status" hidden></p>
+        <div id="${canvasId}" class="course-map-canvas" hidden></div>
+      </div>`;
+    document.getElementById(mapId)?.addEventListener("click", () => openCourseMap());
+    document.getElementById(likeId)?.addEventListener("click", () => toggleCourseLike());
+  } catch (err) {
+    alert(err.message || "코스를 열 수 없습니다.");
+  }
+}
+
+async function toggleCourseLike() {
+  if (!requireLogin() || !currentCourse?.courseId) return;
+  const likeId = courseDetailCtx === "public" ? "courseLikeBtnPublic" : "courseLikeBtn";
+  const btn = document.getElementById(likeId);
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`/api/courses/${currentCourse.courseId}/like`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memberId: currentMemberId() }),
+    });
+    const data = await readJsonResponse(res);
+    if (!res.ok) throw new Error(data.error || "좋아요 실패");
+    currentCourse.liked = !!data.liked;
+    if (data.likeCount != null) currentCourse.likeCount = data.likeCount;
+    if (btn) {
+      btn.classList.toggle("is-on", !!data.liked);
+      btn.setAttribute("aria-pressed", String(!!data.liked));
+      const countEl = document.getElementById(`${likeId}Count`);
+      if (countEl) countEl.textContent = String(Number(data.likeCount) || 0);
+    }
+  } catch (err) {
+    alert(err.message || "좋아요 실패");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/** 계획 따라가기 투어 — 상세 좌우 화살표 */
+let courseTour = null; // { spots, index, courseId }
+
+function updateCourseTourNav() {
+  const active = !!courseTour?.spots?.length;
+  const index = courseTour?.index ?? 0;
+  const total = courseTour?.spots?.length ?? 0;
+  document.querySelectorAll(".tour-nav-prev").forEach((btn) => {
+    btn.hidden = !active;
+    btn.disabled = !active || index <= 0;
+  });
+  document.querySelectorAll(".tour-nav-next").forEach((btn) => {
+    btn.hidden = !active;
+    btn.disabled = !active || index >= total - 1;
+  });
+  document.querySelectorAll(".tour-nav-badge").forEach((badge) => {
+    badge.hidden = !active;
+    if (active) badge.textContent = `${index + 1}/${total}`;
+  });
+}
+
+function openCourseTourSpot(index) {
+  if (!courseTour?.spots?.length) return;
+  const i = Math.max(0, Math.min(index, courseTour.spots.length - 1));
+  courseTour.index = i;
+  updateCourseTourNav();
+  const spot = courseTour.spots[i];
+  if (spot?.postId) {
+    placeDialog?.close?.();
+    openDetail(Number(spot.postId));
+    updateCourseTourNav();
+    return;
+  }
+  detailDialog?.close?.();
+  const gem = currentGems.find(
+    (g) => g.resNm === spot.resNm && (!spot.sido || g.sido === spot.sido)
+  ) || {
+    resNm: spot.resNm || spot.locationTitle || "",
+    sido: spot.sido || spot.address || "",
+    thumbnail: spot.imageUrl || "",
+  };
+  openPlaceDetail(gem);
+  updateCourseTourNav();
+}
+
+function startCourseTour(course = currentCourse) {
+  if (!course?.spots?.length) {
+    alert("따라갈 장소가 없습니다. AI 추천에서 장소를 담아 주세요.");
+    return;
+  }
+  courseTour = {
+    courseId: course.courseId,
+    spots: course.spots.slice(),
+    index: 0,
+  };
+  openCourseTourSpot(0);
+}
+
+function endCourseTour() {
+  courseTour = null;
+  updateCourseTourNav();
+}
+
+function courseTourNext() {
+  if (!courseTour) return;
+  if (courseTour.index >= courseTour.spots.length - 1) return;
+  openCourseTourSpot(courseTour.index + 1);
+}
+
+function courseTourPrev() {
+  if (!courseTour || courseTour.index <= 0) return;
+  openCourseTourSpot(courseTour.index - 1);
+}
+
 async function setUiLang(lang) {
   uiLang = lang === "en" ? "en" : "ko";
   localStorage.setItem(LANG_STORAGE_KEY, uiLang);
@@ -2647,6 +3768,8 @@ async function setUiLang(lang) {
       renderGems(currentGems);
     } else if (activeTab === "domestic" || activeTab === "foreign") {
       await loadBoardPosts(activeTab);
+    } else if (activeTab === "courses") {
+      await loadPublicCourses();
     } else if (activeTab === "my") {
       await loadMyPage();
     }
