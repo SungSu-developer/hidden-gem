@@ -87,7 +87,7 @@ public class HiddenGemServer {
     private static final String PAID_VISITOR_URL =
             "http://openapi.tour.go.kr/openapi/service/TourismResourceStatsService/getPchrgTrrsrtVisitorList";
     private static final String KOR_SERVICE_BASE = "https://apis.data.go.kr/B551011/KorService2";
-    private static final Map<String, String> GEM_CACHE = new HashMap<>();
+    private static final Map<String, List<HiddenGem>> GEM_LIST_CACHE = new HashMap<>();
     private static final Map<String, List<Attraction>> YM_DATA_CACHE = new HashMap<>();
     /** 썸네일/상세 검색 키워드 최대 개수 */
     private static final int MAX_THUMB_KEYWORDS = 12;
@@ -157,7 +157,8 @@ public class HiddenGemServer {
                 System.out.println("백그라운드: 관광지 데이터 미리 로딩…");
                 String ym = defaultYm();
                 loadYmData(ym);
-                buildHiddenGemsJson(ym, "", "", 30);
+                // 프론트 limit=100 과 같은 키로 목록 캐시
+                computeHiddenGems(ym, "", "", 100);
                 System.out.println("백그라운드: 데이터 준비 완료");
             } catch (Exception e) {
                 System.err.println("백그라운드 로딩 실패: " + e.getMessage());
@@ -617,11 +618,9 @@ public class HiddenGemServer {
             int limit = Math.min(Math.max(parseInt(q.get("limit"), 30), 1), 100);
 
             String cacheKey = ym + ":" + sido + ":" + gungu + ":" + limit;
-            String body = GEM_CACHE.get(cacheKey);
-            if (body == null) {
-                body = buildHiddenGemsJson(ym, sido, gungu, limit);
-                GEM_CACHE.put(cacheKey, body);
-            }
+            List<HiddenGem> gems = computeHiddenGems(ym, sido, gungu, limit);
+            // 사진·상세는 RAM 조각 캐시에서 매번 붙여서 한 번에 내려줌 (TourAPI 추가 호출 없음)
+            String body = serializeHiddenGemsJson(ym, sido, gungu, gems, true);
             respond(ex, 200, "application/json; charset=utf-8", body.getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             respond(ex, 502, "application/json; charset=utf-8", jsonError(e.getMessage()).getBytes(StandardCharsets.UTF_8));
@@ -674,8 +673,19 @@ public class HiddenGemServer {
     }
 
     private static String buildHiddenGemsJson(String ym, String sido, String gungu, int limit) throws Exception {
+        return serializeHiddenGemsJson(ym, sido, gungu, computeHiddenGems(ym, sido, gungu, limit), true);
+    }
+
+    private static List<HiddenGem> computeHiddenGems(String ym, String sido, String gungu, int limit)
+            throws Exception {
+        String cacheKey = ym + ":" + sido + ":" + gungu + ":" + limit;
+        synchronized (GEM_LIST_CACHE) {
+            List<HiddenGem> cached = GEM_LIST_CACHE.get(cacheKey);
+            if (cached != null) {
+                return cached;
+            }
+        }
         List<Attraction> all = loadYmData(ym);
-        // 순위·점수는 전국 기준으로 유지한 뒤, 지역 필터는 결과만 자른다.
         Map<String, Integer> foreignRank = rankMap(all, a -> a.foreign);
         Map<String, Integer> domesticRank = rankMap(all, a -> a.domestic);
 
@@ -713,16 +723,31 @@ public class HiddenGemServer {
             });
         }
 
-        List<Attraction> scoped = filterAttractions(all, sido, gungu);
         if (gems.size() > limit) {
             gems = new ArrayList<>(gems.subList(0, limit));
+        } else {
+            gems = new ArrayList<>(gems);
         }
+        synchronized (GEM_LIST_CACHE) {
+            GEM_LIST_CACHE.put(cacheKey, gems);
+        }
+        return gems;
+    }
 
+    /**
+     * 젬 목록 JSON 직렬화.
+     * enrich=true 이면 IMAGE_CACHE / PLACE_DETAIL_CACHE 에 있는 것만 붙여서 한 번에 내려줌.
+     * (없으면 필드 생략 — TourAPI 추가 호출 없음)
+     */
+    private static String serializeHiddenGemsJson(
+            String ym, String sido, String gungu, List<HiddenGem> gems, boolean enrich) throws Exception {
+        List<Attraction> scoped = filterAttractions(loadYmData(ym), sido, gungu);
         StringBuilder sb = new StringBuilder();
         sb.append("{\"ym\":").append(q(ym))
                 .append(",\"sido\":").append(sido.isEmpty() ? "null" : q(sido))
                 .append(",\"gungu\":").append(gungu.isEmpty() ? "null" : q(gungu))
                 .append(",\"totalAttractions\":").append(scoped.size())
+                .append(",\"enriched\":").append(enrich)
                 .append(",\"gems\":[");
         for (int i = 0; i < gems.size(); i++) {
             if (i > 0) {
@@ -739,11 +764,86 @@ public class HiddenGemServer {
                     .append(",\"foreignShare\":").append(round(g.foreignShare))
                     .append(",\"domesticRank\":").append(g.domesticRank)
                     .append(",\"foreignRank\":").append(g.foreignRank)
-                    .append(",\"gemScore\":").append(round(g.gemScore))
-                    .append('}');
+                    .append(",\"gemScore\":").append(round(g.gemScore));
+            if (enrich) {
+                String thumb = cachedThumbnail(g.resNm, g.sido);
+                String detailJson = cachedPlaceDetailJson(g.resNm, g.sido, g.gungu);
+                if (thumb != null && !thumb.isBlank()) {
+                    sb.append(",\"thumbnail\":").append(q(thumb));
+                } else if (detailJson != null) {
+                    String fromDetail = extractJsonStringField(detailJson, "image");
+                    if (fromDetail != null && !fromDetail.isBlank()) {
+                        sb.append(",\"thumbnail\":").append(q(fromDetail));
+                    }
+                }
+                if (detailJson != null && !detailJson.isBlank()) {
+                    sb.append(",\"detail\":").append(detailJson);
+                }
+            }
+            sb.append('}');
         }
         sb.append("]}");
         return sb.toString();
+    }
+
+    private static String cachedThumbnail(String resNm, String sido) {
+        String key = imageCacheKey(resNm, sido);
+        if (!IMAGE_CACHE.containsKey(key)) {
+            return null;
+        }
+        String cached = IMAGE_CACHE.get(key);
+        return cached == null || cached.isEmpty() ? null : cached;
+    }
+
+    private static String cachedPlaceDetailJson(String resNm, String sido, String gungu) {
+        String exact = resNm + "|" + sido + "|" + gungu;
+        String body = PLACE_DETAIL_CACHE.get(exact);
+        if (body != null) {
+            return body;
+        }
+        // gungu 없이 저장된 키도 허용
+        String loose = resNm + "|" + sido + "|";
+        body = PLACE_DETAIL_CACHE.get(loose);
+        if (body != null) {
+            return body;
+        }
+        for (Map.Entry<String, String> e : PLACE_DETAIL_CACHE.entrySet()) {
+            String k = e.getKey();
+            if (k.startsWith("cid:")) {
+                continue;
+            }
+            if (k.startsWith(resNm + "|" + sido + "|")) {
+                return e.getValue();
+            }
+        }
+        return null;
+    }
+
+    /** 단순 JSON 문자열 필드 추출 (중첩/이스케이프 최소 가정) */
+    private static String extractJsonStringField(String json, String field) {
+        if (json == null || field == null) {
+            return null;
+        }
+        String needle = "\"" + field + "\":\"";
+        int i = json.indexOf(needle);
+        if (i < 0) {
+            return null;
+        }
+        int start = i + needle.length();
+        StringBuilder out = new StringBuilder();
+        for (int p = start; p < json.length(); p++) {
+            char c = json.charAt(p);
+            if (c == '\\' && p + 1 < json.length()) {
+                out.append(json.charAt(p + 1));
+                p++;
+                continue;
+            }
+            if (c == '"') {
+                return out.toString();
+            }
+            out.append(c);
+        }
+        return null;
     }
 
     private static boolean isBlockedName(String resNm) {

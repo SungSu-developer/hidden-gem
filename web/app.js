@@ -2,7 +2,6 @@ const sortSelect = document.getElementById("sort");
 const sidoSelect = document.getElementById("sidoSelect");
 const statusEl = document.getElementById("status");
 const resultsEl = document.getElementById("results");
-const writeBtn = document.getElementById("writeBtn");
 const tabs = document.querySelectorAll(".tab");
 const panels = {
   ai: document.getElementById("panel-ai"),
@@ -124,8 +123,10 @@ function applyChromeI18n() {
   if (!currentUser) authLabel.textContent = t("needLogin");
   authOpenBtn.textContent = t("loginJoin");
   logoutBtn.textContent = t("logout");
-  writeBtn.title = t("write");
-  writeBtn.textContent = t("write");
+  document.querySelectorAll(".board-write-btn").forEach((btn) => {
+    btn.title = t("write");
+    btn.textContent = t("write");
+  });
   const regionLabel = document.querySelector('label[for="sidoSelect"]');
   const sortLabel = document.querySelector('label[for="sort"]');
   if (regionLabel) regionLabel.textContent = t("region");
@@ -898,6 +899,56 @@ async function prefetchPlaceDetails(gems) {
   await Promise.all(Array.from({ length: n }, () => worker()));
 }
 
+/** 서버가 목록에 실어 준 thumbnail/detail 을 로컬 캐시에 반영 */
+function hydrateGemsFromServerPayload(gems) {
+  for (const g of gems || []) {
+    const key = gemKey(g);
+    if (g.detail && typeof g.detail === "object") {
+      placeDetailCache.set(key, g.detail);
+      if (g.detail.found && g.detail.image && !g.thumbnail) {
+        g.thumbnail = g.detail.image;
+      }
+      if (g.detail.contentId) {
+        placeDetailCache.set("cid:" + g.detail.contentId, g.detail);
+      }
+    }
+  }
+}
+
+function gemsReadyForDisplay(gems) {
+  return (gems || []).filter((g) => {
+    if (!g.thumbnail) return false;
+    const detail = placeDetailCache.get(gemKey(g));
+    return !!(detail && detail.found === true);
+  });
+}
+
+/** 표시 개수(need)만큼 상세가 모이면 중단 */
+async function prefetchPlaceDetailsUntil(gems, need) {
+  if (!gems?.length || need <= 0) return;
+  const queue = gems.filter((g) => !placeDetailCache.has(gemKey(g)));
+  if (!queue.length) return;
+
+  const worker = async () => {
+    while (queue.length) {
+      if (gemsReadyForDisplay(gems).length >= need) {
+        queue.length = 0;
+        break;
+      }
+      const gem = queue.shift();
+      if (!gem) break;
+      try {
+        await fetchPlaceDetail(gem);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const n = Math.min(PLACE_PREFETCH_CONCURRENCY, queue.length);
+  await Promise.all(Array.from({ length: n }, () => worker()));
+}
+
 function aiCacheKey(sido) {
   return `${DEFAULT_YM}|${sido || ""}`;
 }
@@ -927,7 +978,12 @@ function readAiSessionCache(key) {
 function writeAiSessionCache(key, gems) {
   try {
     const all = readAiSessionStore();
-    all[key] = gems;
+    all[key] = (gems || []).map((g) => {
+      const copy = { ...g };
+      const detail = placeDetailCache.get(gemKey(g));
+      if (detail) copy.detail = detail;
+      return copy;
+    });
     sessionStorage.setItem(AI_SESSION_CACHE_KEY, JSON.stringify(all));
   } catch {
     /* quota 등 무시 */
@@ -958,6 +1014,7 @@ function showAiEmpty(sido, searchEmpty) {
 }
 
 function applyCachedAiGems(gems) {
+  hydrateGemsFromServerPayload(gems);
   aiGemsPool = gems.slice();
   applyGemSearchFilter();
   hideStatus(statusEl);
@@ -1019,28 +1076,34 @@ async function loadHiddenGems(options = {}) {
         return;
       }
 
-      const needWork =
-        gems.some((g) => !g.thumbnail) ||
-        gems.some((g) => !placeDetailCache.has(gemKey(g)));
+      // 서버가 캐시에서 붙여 준 사진·상세를 브라우저 캐시에 바로 반영
+      hydrateGemsFromServerPayload(gems);
+
+      const showLimit = Number(DEFAULT_LIMIT) || 30;
+      let enriched = gemsReadyForDisplay(gems);
+
+      const needThumbs = gems.filter((g) => !g.thumbnail);
+      const needDetails = gems.filter((g) => !placeDetailCache.has(gemKey(g)));
+      const needWork = enriched.length < showLimit && (needThumbs.length > 0 || needDetails.length > 0);
+
       if (needWork) {
         showStatus(
           statusEl,
           uiLang === "en" ? "Loading AI picks" : "AI 계산중",
           "info"
         );
+        if (needThumbs.length) {
+          await loadThumbnails(needThumbs);
+        }
+        // 표시분(30)만 채우면 중단 — 나머지 상세는 클릭 시 로드
+        if (gemsReadyForDisplay(gems).length < showLimit && needDetails.length) {
+          await prefetchPlaceDetailsUntil(gems, showLimit);
+        }
+        enriched = gemsReadyForDisplay(gems);
       }
-      await loadThumbnails(gems);
-      await prefetchPlaceDetails(gems);
 
       // 로딩 중에 다른 지역으로 바뀌었으면 화면은 건드리지 않고 캐시만 저장
       const stillCurrent = aiCacheKey(sidoSelect?.value || "") === key;
-
-      const showLimit = Number(DEFAULT_LIMIT) || 30;
-      const enriched = gems.filter((g) => {
-        if (!g.thumbnail) return false;
-        const detail = placeDetailCache.get(gemKey(g));
-        return !!(detail && detail.found === true);
-      });
 
       if (enriched.length) {
         gems = enriched.length > showLimit ? enriched.slice(0, showLimit) : enriched;
@@ -1131,7 +1194,17 @@ function applyGemSearchFilter() {
   currentGems = aiGemsPool.filter((g) => {
     const name = String(g.resNm || "").toLowerCase();
     const nameEn = String(g.resNmEn || "").toLowerCase();
-    return name.includes(q) || nameEn.includes(q);
+    const sido = String(g.sido || "").toLowerCase();
+    const gungu = String(g.gungu || "").toLowerCase();
+    const detail = placeDetailCache.get(gemKey(g));
+    const addr = String(detail?.addr || detail?.address || "").toLowerCase();
+    return (
+      name.includes(q) ||
+      nameEn.includes(q) ||
+      sido.includes(q) ||
+      gungu.includes(q) ||
+      addr.includes(q)
+    );
   });
 }
 
@@ -1441,6 +1514,17 @@ function transitSectionHtml() {
             uiLang === "en" ? "From my location" : "내 위치에서"
           }</button>
         </div>
+        <div id="transitOriginManual" class="transit-origin-manual" hidden>
+          <label for="transitOriginInput" class="sr-only">${
+            uiLang === "en" ? "Departure address" : "출발지 주소"
+          }</label>
+          <input id="transitOriginInput" type="text" placeholder="${
+            uiLang === "en" ? "Enter departure address" : "출발지 주소 입력 (예: 서울역)"
+          }" autocomplete="street-address">
+          <button type="button" class="btn-ghost" id="transitOriginSearchBtn">${
+            uiLang === "en" ? "Search route" : "경로 검색"
+          }</button>
+        </div>
         <p id="transitStatus" class="place-transit-status" hidden></p>
         <div id="transitResult" class="transit-result" hidden></div>
       </section>`;
@@ -1677,6 +1761,16 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+async function getGeolocationPermissionState() {
+  try {
+    if (!navigator.permissions?.query) return "unknown";
+    const status = await navigator.permissions.query({ name: "geolocation" });
+    return status.state || "unknown"; // granted | denied | prompt
+  } catch {
+    return "unknown";
+  }
+}
+
 function getCurrentPositionGps() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -1691,14 +1785,118 @@ function getCurrentPositionGps() {
           accuracy: pos.coords.accuracy,
         }),
       (err) => {
+        const denied = err?.code === 1;
         let msg = uiLang === "en" ? "Could not get location." : "위치를 가져오지 못했습니다.";
-        if (err?.code === 1) msg = uiLang === "en" ? "Location permission denied." : "위치 권한이 거부되었습니다.";
-        else if (err?.code === 2) msg = uiLang === "en" ? "Location unavailable." : "위치를 확인할 수 없습니다.";
-        else if (err?.code === 3) msg = uiLang === "en" ? "Location request timed out." : "위치 요청 시간이 초과되었습니다.";
-        reject(new Error(msg));
+        if (denied) {
+          msg =
+            uiLang === "en"
+              ? "Location permission is blocked. Allow location for this site in browser settings, or enter a departure address below."
+              : "위치 권한이 차단되어 있습니다. 브라우저 사이트 설정에서 위치를 허용한 뒤 다시 누르거나, 아래에 출발지 주소를 입력해 주세요.";
+        } else if (err?.code === 2) {
+          msg = uiLang === "en" ? "Location unavailable." : "위치를 확인할 수 없습니다.";
+        } else if (err?.code === 3) {
+          msg = uiLang === "en" ? "Location request timed out." : "위치 요청 시간이 초과되었습니다.";
+        }
+        const e = new Error(msg);
+        e.code = err?.code;
+        e.permissionDenied = denied;
+        reject(e);
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+      // maximumAge:0 → 캐시된 실패/옛 좌표에 막히지 않고 매번 새로 요청
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
+  });
+}
+
+function showTransitOriginManual(show) {
+  const box = document.getElementById("transitOriginManual");
+  if (box) box.hidden = !show;
+}
+
+async function runTransitFromOrigin(origin, gem, data, statusEl) {
+  const dest = await resolveDestCoords(gem, data);
+  const cfg = await fetchPublicConfig();
+  if (cfg.odsayApiKey) {
+    const odsay = await searchOdsayTransit(origin, dest, cfg.odsayApiKey);
+    renderOdsayTransit(odsay);
+    statusEl.hidden = true;
+  } else if (cfg.configMissing) {
+    statusEl.textContent = "서버를 재시작한 뒤 다시 시도해 주세요.";
+  } else {
+    statusEl.textContent = uiLang === "en" ? "No route." : "경로를 찾지 못했습니다.";
+  }
+}
+
+function bindTransitSection(gem, data) {
+  const btn = document.getElementById("transitGpsBtn");
+  const statusEl = document.getElementById("transitStatus");
+  const originInput = document.getElementById("transitOriginInput");
+  const originSearchBtn = document.getElementById("transitOriginSearchBtn");
+  if (!btn || !statusEl) return;
+
+  const setBusy = (busy) => {
+    btn.disabled = busy;
+    if (originSearchBtn) originSearchBtn.disabled = busy;
+  };
+
+  btn.addEventListener("click", async () => {
+    setBusy(true);
+    statusEl.hidden = false;
+    statusEl.textContent = uiLang === "en" ? "Finding route…" : "경로 찾는 중…";
+    try {
+      const perm = await getGeolocationPermissionState();
+      if (perm === "denied") {
+        showTransitOriginManual(true);
+        statusEl.textContent =
+          uiLang === "en"
+            ? "Location is blocked for this site. Allow it in browser settings (lock icon → Site settings), then try again — or enter a departure address below."
+            : "이 사이트 위치 권한이 차단되어 있습니다. 주소창 자물쇠 → 사이트 설정에서 위치를 ‘허용’으로 바꾼 뒤 다시 누르거나, 아래에 출발지 주소를 입력해 주세요.";
+        return;
+      }
+      const origin = await getCurrentPositionGps();
+      showTransitOriginManual(false);
+      await runTransitFromOrigin(origin, gem, data, statusEl);
+    } catch (err) {
+      statusEl.hidden = false;
+      statusEl.textContent = err.message || (uiLang === "en" ? "Failed." : "실패했습니다.");
+      if (err.permissionDenied || err.code === 1) {
+        showTransitOriginManual(true);
+      }
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  const runManualOrigin = async () => {
+    const q = originInput?.value?.trim() || "";
+    if (!q) {
+      statusEl.hidden = false;
+      statusEl.textContent =
+        uiLang === "en" ? "Enter a departure address." : "출발지 주소를 입력해 주세요.";
+      return;
+    }
+    setBusy(true);
+    statusEl.hidden = false;
+    statusEl.textContent = uiLang === "en" ? "Finding route…" : "경로 찾는 중…";
+    try {
+      const cfg = await fetchPublicConfig();
+      await loadKakaoMapsSdk(cfg.kakaoJsKey || "");
+      const origin = await geocodePlaceWithKakao(q);
+      await runTransitFromOrigin(origin, gem, data, statusEl);
+    } catch (err) {
+      statusEl.hidden = false;
+      statusEl.textContent = err.message || (uiLang === "en" ? "Failed." : "실패했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  originSearchBtn?.addEventListener("click", () => runManualOrigin());
+  originInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      runManualOrigin();
+    }
   });
 }
 
@@ -1741,36 +1939,6 @@ async function resolveDestCoords(gem, data) {
     throw new Error(uiLang === "en" ? "Destination coordinates unavailable." : "도착지 좌표가 없습니다.");
   }
   return geocodePlaceWithKakao(q.trim());
-}
-
-function bindTransitSection(gem, data) {
-  const btn = document.getElementById("transitGpsBtn");
-  const statusEl = document.getElementById("transitStatus");
-  if (!btn || !statusEl) return;
-
-  btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    statusEl.hidden = false;
-    statusEl.textContent = uiLang === "en" ? "Finding route…" : "경로 찾는 중…";
-    try {
-      const origin = await getCurrentPositionGps();
-      const dest = await resolveDestCoords(gem, data);
-      const cfg = await fetchPublicConfig();
-      if (cfg.odsayApiKey) {
-        const odsay = await searchOdsayTransit(origin, dest, cfg.odsayApiKey);
-        renderOdsayTransit(odsay);
-      } else if (cfg.configMissing) {
-        statusEl.textContent = "서버를 재시작한 뒤 다시 시도해 주세요.";
-      } else {
-        statusEl.textContent = uiLang === "en" ? "No route." : "경로를 찾지 못했습니다.";
-      }
-    } catch (err) {
-      statusEl.hidden = false;
-      statusEl.textContent = err.message || (uiLang === "en" ? "Failed." : "실패했습니다.");
-    } finally {
-      btn.disabled = false;
-    }
-  });
 }
 
 function jsonp(url) {
@@ -2469,7 +2637,14 @@ function postMatchesPlaceName(post, q) {
   const needle = q.trim().toLowerCase();
   const title = String(post.locationTitle || "").toLowerCase();
   const titleEn = String(post._en?.locationTitle || "").toLowerCase();
-  return title.includes(needle) || titleEn.includes(needle);
+  const address = String(post.address || "").toLowerCase();
+  const content = String(post.content || "").toLowerCase();
+  return (
+    title.includes(needle) ||
+    titleEn.includes(needle) ||
+    address.includes(needle) ||
+    content.includes(needle)
+  );
 }
 
 function filterBoardPosts(posts, sido, q) {
@@ -2883,14 +3058,20 @@ authForm.addEventListener("submit", async (e) => {
   }
 });
 
-writeBtn.addEventListener("click", () => {
+function openWriteDialog(category) {
   if (!requireLogin("글쓰기는 로그인 후 이용할 수 있습니다.")) return;
   resetWriteForm();
   const cat = document.getElementById("writeCategory");
   if (cat) {
-    cat.value = activeTab === "foreign" ? "FOREIGN" : "DOMESTIC";
+    cat.value = category === "FOREIGN" ? "FOREIGN" : "DOMESTIC";
   }
   writeDialog.showModal();
+}
+
+document.querySelectorAll(".board-write-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    openWriteDialog(btn.dataset.writeCategory || "DOMESTIC");
+  });
 });
 
 writeCancelBtn.addEventListener("click", () => {

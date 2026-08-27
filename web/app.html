@@ -34,10 +34,11 @@
             <button type="button" class="lang-btn active" data-lang="ko" id="langKo">KO</button>
             <button type="button" class="lang-btn" data-lang="en" id="langEn">EN</button>
           </div>
-          <span id="authLabel" class="auth-label">로그인이 필요합니다</span>
-          <button type="button" id="authOpenBtn" class="auth-btn">로그인</button>
-          <button type="button" id="logoutBtn" class="auth-btn" hidden>로그아웃</button>
-          <button type="button" id="writeBtn" class="write-btn" title="글쓰기">글쓰기</button>
+          <div class="site-auth">
+            <span id="authLabel" class="auth-label">로그인이 필요합니다</span>
+            <button type="button" id="authOpenBtn" class="auth-btn">로그인</button>
+            <button type="button" id="logoutBtn" class="auth-btn" hidden>로그아웃</button>
+          </div>
         </div>
       </div>
     </header>
@@ -93,6 +94,7 @@
           <input id="boardSearchDomestic" type="search" placeholder="장소명 검색" autocomplete="off">
           <button type="button" id="boardSearchBtnDomestic" class="btn-ghost board-search-btn">검색</button>
         </div>
+        <button type="button" class="write-btn board-write-btn" data-write-category="DOMESTIC" title="글쓰기">글쓰기</button>
       </div>
       <div id="boardStatusDomestic" class="status" hidden></div>
       <ul id="boardListDomestic" class="thread-feed"></ul>
@@ -121,6 +123,7 @@
           <input id="boardSearchForeign" type="search" placeholder="장소명 검색" autocomplete="off">
           <button type="button" id="boardSearchBtnForeign" class="btn-ghost board-search-btn">검색</button>
         </div>
+        <button type="button" class="write-btn board-write-btn" data-write-category="FOREIGN" title="글쓰기">글쓰기</button>
       </div>
       <div id="boardStatusForeign" class="status" hidden></div>
       <ul id="boardListForeign" class="thread-feed"></ul>
