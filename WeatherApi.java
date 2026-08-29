@@ -4,12 +4,15 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -17,9 +20,13 @@ import com.sun.net.httpserver.HttpExchange;
 /**
  * 기상청 초단기실황 프록시 — {@code GET /api/weather?sido=}
  * <p>
- * 키: 환경변수 {@code WEATHER_SERVICE_KEY} 우선.
+ * 키: 환경변수 {@code WEATHER_SERVICE_KEY} 또는 {@code db.properties}의 {@code weather.service.key}.
  */
 public final class WeatherApi {
+
+    private static final Path DB_PROPERTIES = Path.of("db.properties");
+    private static volatile String cachedKey;
+    private static volatile boolean keyLoaded;
 
     private static final String NCST =
             "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst";
@@ -339,11 +346,33 @@ public final class WeatherApi {
     }
 
     private static String serviceKey() {
-        String key = System.getenv("WEATHER_SERVICE_KEY");
-        if (key == null || key.isBlank()) {
-            key = "710a0030105c2b193aadfe1c2b574a087424bcb3587be2ec1d15a0fe8f10d240";
+        if (!keyLoaded) {
+            synchronized (WeatherApi.class) {
+                if (!keyLoaded) {
+                    String key = System.getenv("WEATHER_SERVICE_KEY");
+                    if (key == null || key.isBlank()) {
+                        try {
+                            if (Files.isRegularFile(DB_PROPERTIES)) {
+                                Properties props = new Properties();
+                                try (InputStream in = Files.newInputStream(DB_PROPERTIES)) {
+                                    props.load(in);
+                                }
+                                key = props.getProperty("weather.service.key");
+                            }
+                        } catch (Exception ignored) {
+                            key = null;
+                        }
+                    }
+                    cachedKey = key == null ? "" : key.trim();
+                    keyLoaded = true;
+                }
+            }
         }
-        return key;
+        if (cachedKey == null || cachedKey.isBlank()) {
+            throw new IllegalStateException(
+                    "weather.service.key 가 없습니다. db.properties 또는 WEATHER_SERVICE_KEY 를 설정하세요.");
+        }
+        return cachedKey;
     }
 
     private static String httpGet(String urlString) throws Exception {
