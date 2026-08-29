@@ -68,7 +68,25 @@
       </div>
 
       <div id="status" class="status" hidden></div>
-      <ul id="results" class="post-list"></ul>
+      <div class="ai-layout">
+        <div class="ai-main">
+          <ul id="results" class="post-list"></ul>
+        </div>
+        <aside class="ai-sidebar" aria-label="날씨와 인기 글">
+          <section class="ai-side-card" id="weatherCard">
+            <h3 class="ai-side-title">날씨</h3>
+            <div id="weatherBody" class="weather-body">불러오는 중…</div>
+          </section>
+          <section class="ai-side-card">
+            <h3 class="ai-side-title">내국인 인기</h3>
+            <div id="aiPopularDomestic" class="ai-popular-slot">불러오는 중…</div>
+          </section>
+          <section class="ai-side-card">
+            <h3 class="ai-side-title">외국인 인기</h3>
+            <div id="aiPopularForeign" class="ai-popular-slot">불러오는 중…</div>
+          </section>
+        </aside>
+      </div>
     </section>
 
     <!-- 내국인 추천 = DB Post 피드 -->
@@ -256,18 +274,24 @@
   <!-- 글쓰기 -->
   <dialog id="writeDialog" class="modal">
     <form method="dialog" id="writeForm" class="modal-card">
-      <h2 id="writeTitle">글쓰기</h2>
+      <p id="writeTitle" class="write-mode-label">글쓰기</p>
+      <label>장소명
+        <input id="writeLocation" name="locationTitle" placeholder="예: ○○카페, ○○공원" required>
+      </label>
       <label>게시판
         <select id="writeCategory" name="category">
           <option value="DOMESTIC">내국인 추천</option>
           <option value="FOREIGN">외국인 추천</option>
         </select>
       </label>
-      <label>장소명<input id="writeLocation" name="locationTitle" placeholder="예: 부산시립미술관" required></label>
       <label>도/시
-        <select id="writeSido" name="address" required>
+        <select id="writeSido" name="sido" required>
           <option value="">선택</option>
         </select>
+      </label>
+      <label>세부주소
+        <input id="writeDetailAddress" name="detailAddress" placeholder="예: 부산진구 ○○로 12 (없을 시 지도기능 불가)" autocomplete="street-address">
+        <span class="field-hint">세부주소가 없으면 길찾기·지도 기능을 쓸 수 없습니다.</span>
       </label>
       <label>사진
         <input id="writeImage" name="image" type="file" accept="image/*">

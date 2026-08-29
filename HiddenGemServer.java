@@ -42,7 +42,7 @@ import org.w3c.dom.NodeList;
  * 웹 UI + REST API — 외국인에게 상대적으로 알려졌지만 내국인에게는 덜 알려진 유료관광지(히든젬) 탐색.
  * <p>
  * 점수: {@code ln(1+foreign) × (domesticRank − foreignRank)}<br>
- * 필터: 숙박·레저 키워드 제외, foreign≥100, domesticRank&gt;50, foreignRank&gt;15
+ * 필터: 숙박·레저 키워드 제외, foreign≥100, domesticRank&gt;50
  * <p>
  * 데이터: openapi.tour.go.kr 유료관광지방문객수조회
  * 실행: {@code start.bat} 또는 {@code start.sh}
@@ -55,13 +55,11 @@ public class HiddenGemServer {
     private static final int PORT = 8080;
     private static final Path WEB_ROOT = Path.of("web");
     /** 표본이 너무 적은 곳 제외 */
-    private static final double MIN_FOREIGN_VISITORS = 100;
+    private static final double MIN_FOREIGN_VISITORS = 50;
     /** 내국인에게 이미 유명한 곳 제외 (순위 1=최다) */
-    private static final int MIN_DOMESTIC_RANK = 50;
-    /** 외국인 메가 관광지 제외 */
-    private static final int MIN_FOREIGN_RANK = 15;
+    private static final int MIN_DOMESTIC_RANK = 0;
     private static final Pattern BLOCKED_NAME = Pattern.compile(
-            "리조트|호텔|워터파크|케리비안|스키장|골프|콘도|모텔|펜션|스파플러스|한솔오크|플레이도시|카지노");
+            "리조트|호텔|워터파크|케리비안|콘도|모텔|펜션|한솔오크|플레이도시");
     /**
      * TourAPI 검색용 별칭. key는 {@link #compactName(String)} 기준.
      * 통계 명칭 ↔ 관광정보 명칭이 다른 경우 (복수 후보 가능).
@@ -133,6 +131,7 @@ public class HiddenGemServer {
         server.createContext("/api/upload", BoardApi::handleUpload);
         server.createContext("/uploads", BoardApi::handleUploads);
         server.createContext("/api/posts", BoardApi::handlePosts);
+        server.createContext("/api/weather", WeatherApi::handle);
         server.createContext("/api/traffic", HiddenGemServer::handleTraffic);
         server.setExecutor(Executors.newFixedThreadPool(8));
         server.start();
@@ -157,8 +156,8 @@ public class HiddenGemServer {
                 System.out.println("백그라운드: 관광지 데이터 미리 로딩…");
                 String ym = defaultYm();
                 loadYmData(ym);
-                // 프론트 limit=100 과 같은 키로 목록 캐시
-                computeHiddenGems(ym, "", "", 100);
+                // limit=0 → 점수 통과분 전부
+                computeHiddenGems(ym, "", "", 0);
                 System.out.println("백그라운드: 데이터 준비 완료");
             } catch (Exception e) {
                 System.err.println("백그라운드 로딩 실패: " + e.getMessage());
@@ -615,7 +614,9 @@ public class HiddenGemServer {
             String ym = q.getOrDefault("ym", defaultYm());
             String sido = q.getOrDefault("sido", "").trim();
             String gungu = q.getOrDefault("gungu", "").trim();
-            int limit = Math.min(Math.max(parseInt(q.get("limit"), 30), 1), 100);
+            // limit=0 또는 미지정 → 점수 통과분 전부. 상한은 과도한 응답 방지용.
+            int limitRaw = parseInt(q.get("limit"), 0);
+            int limit = limitRaw <= 0 ? 0 : Math.min(limitRaw, 5000);
 
             String cacheKey = ym + ":" + sido + ":" + gungu + ":" + limit;
             List<HiddenGem> gems = computeHiddenGems(ym, sido, gungu, limit);
@@ -699,13 +700,10 @@ public class HiddenGemServer {
             }
             int fRank = foreignRank.getOrDefault(a.key(), all.size());
             int dRank = domesticRank.getOrDefault(a.key(), all.size());
-            if (dRank <= MIN_DOMESTIC_RANK || fRank <= MIN_FOREIGN_RANK) {
+            if (dRank <= MIN_DOMESTIC_RANK) {
                 continue;
             }
             int gap = dRank - fRank;
-            if (gap <= 0) {
-                continue;
-            }
             double share = a.foreign / (a.foreign + a.domestic) * 100.0;
             double score = Math.log(1.0 + a.foreign) * gap;
             gems.add(new HiddenGem(a, share, dRank, fRank, score));
@@ -723,7 +721,7 @@ public class HiddenGemServer {
             });
         }
 
-        if (gems.size() > limit) {
+        if (limit > 0 && gems.size() > limit) {
             gems = new ArrayList<>(gems.subList(0, limit));
         } else {
             gems = new ArrayList<>(gems);
@@ -2038,13 +2036,10 @@ public class HiddenGemServer {
             }
             int fRank = foreignRank.getOrDefault(a.key(), all.size());
             int dRank = domesticRank.getOrDefault(a.key(), all.size());
-            if (dRank <= MIN_DOMESTIC_RANK || fRank <= MIN_FOREIGN_RANK) {
+            if (dRank <= MIN_DOMESTIC_RANK) {
                 continue;
             }
             int gap = dRank - fRank;
-            if (gap <= 0) {
-                continue;
-            }
             double share = a.foreign / (a.foreign + a.domestic) * 100.0;
             double score = Math.log(1.0 + a.foreign) * gap;
             gems.add(new HiddenGem(a, share, dRank, fRank, score));
