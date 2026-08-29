@@ -74,6 +74,11 @@ public final class BoardDb {
                 System.err.println("Member.profile_image 확장: " + e.getMessage());
             }
             try (Statement st = conn.createStatement()) {
+                st.executeUpdate("ALTER TABLE Location ADD COLUMN detail_address VARCHAR(300) NULL");
+            } catch (SQLException e) {
+                /* duplicate column */
+            }
+            try (Statement st = conn.createStatement()) {
                 st.executeUpdate("""
                         CREATE TABLE IF NOT EXISTS MemberFollow (
                           follower_id VARCHAR(40) NOT NULL,
@@ -312,7 +317,8 @@ public final class BoardDb {
     private static final String POST_SELECT = """
             SELECT p.post_id, p.member_id, p.content, p.reg_date, p.category,
                    m.nickname, m.profile_image,
-                       l.location_id, l.title AS location_title, l.address, l.image_url,
+                       l.location_id, l.title AS location_title, l.address,
+                       l.detail_address, l.image_url,
                        (SELECT COUNT(*) FROM Recommendation r WHERE r.post_id = p.post_id) AS recommend_count,
                        (SELECT COUNT(*) FROM Reply rp WHERE rp.post_id = p.post_id) AS reply_count
                 FROM Post p
@@ -343,7 +349,8 @@ public final class BoardDb {
                     .append(") ");
         }
         if (!query.isEmpty()) {
-            sql.append(" AND COALESCE(l.title, '') LIKE ? ");
+            sql.append(" AND (COALESCE(l.title, '') LIKE ? OR COALESCE(l.detail_address, '') LIKE ?")
+                    .append(" OR COALESCE(l.address, '') LIKE ?) ");
         }
         sql.append(" ORDER BY COALESCE(l.address, ''), p.reg_date DESC, p.post_id DESC ");
 
@@ -356,7 +363,10 @@ public final class BoardDb {
                 ps.setString(i++, "%" + sidoFilter + "%");
             }
             if (!query.isEmpty()) {
-                ps.setString(i, "%" + query + "%");
+                String like = "%" + query + "%";
+                ps.setString(i++, like);
+                ps.setString(i++, like);
+                ps.setString(i, like);
             }
         });
     }
@@ -433,6 +443,7 @@ public final class BoardDb {
             String content,
             String locationTitle,
             String address,
+            String detailAddress,
             String category,
             String imageUrl)
             throws Exception {
@@ -458,6 +469,7 @@ public final class BoardDb {
                         conn,
                         title,
                         address.trim(),
+                        detailAddress == null ? "" : detailAddress.trim(),
                         imageUrl == null ? "" : imageUrl.trim());
                 long postId;
                 try (PreparedStatement ps = conn.prepareStatement(
@@ -493,6 +505,7 @@ public final class BoardDb {
             String content,
             String locationTitle,
             String address,
+            String detailAddress,
             String category,
             String imageUrl)
             throws Exception {
@@ -540,21 +553,24 @@ public final class BoardDb {
                 if (locationId != null) {
                     String title = locationTitle.trim();
                     String addr = address.trim();
+                    String detail = detailAddress == null ? "" : detailAddress.trim();
                     if (imageUrl == null) {
                         try (PreparedStatement ps = conn.prepareStatement(
-                                "UPDATE Location SET title = ?, address = ? WHERE location_id = ?")) {
+                                "UPDATE Location SET title = ?, address = ?, detail_address = ? WHERE location_id = ?")) {
                             ps.setString(1, title);
                             ps.setString(2, addr);
-                            ps.setLong(3, locationId);
+                            ps.setString(3, detail.isBlank() ? null : detail);
+                            ps.setLong(4, locationId);
                             ps.executeUpdate();
                         }
                     } else {
                         try (PreparedStatement ps = conn.prepareStatement(
-                                "UPDATE Location SET title = ?, address = ?, image_url = ? WHERE location_id = ?")) {
+                                "UPDATE Location SET title = ?, address = ?, detail_address = ?, image_url = ? WHERE location_id = ?")) {
                             ps.setString(1, title);
                             ps.setString(2, addr);
-                            ps.setString(3, imageUrl.isBlank() ? null : imageUrl.trim());
-                            ps.setLong(4, locationId);
+                            ps.setString(3, detail.isBlank() ? null : detail);
+                            ps.setString(4, imageUrl.isBlank() ? null : imageUrl.trim());
+                            ps.setLong(5, locationId);
                             ps.executeUpdate();
                         }
                     }
@@ -714,6 +730,13 @@ public final class BoardDb {
         row.put("locationId", rs.wasNull() ? null : locId);
         row.put("locationTitle", nullToEmpty(rs.getString("location_title")));
         row.put("address", nullToEmpty(rs.getString("address")));
+        String detailAddr = "";
+        try {
+            detailAddr = nullToEmpty(rs.getString("detail_address"));
+        } catch (SQLException ignored) {
+            /* older schema */
+        }
+        row.put("detailAddress", detailAddr);
         row.put("imageUrl", nullToEmpty(rs.getString("image_url")));
         row.put("recommendCount", rs.getLong("recommend_count"));
         row.put("replyCount", rs.getLong("reply_count"));
@@ -1746,7 +1769,8 @@ public final class BoardDb {
         }
     }
 
-    private static long insertLocation(Connection conn, String title, String address, String imageUrl)
+    private static long insertLocation(
+            Connection conn, String title, String address, String detailAddress, String imageUrl)
             throws SQLException {
         long nextId;
         try (Statement st = conn.createStatement();
@@ -1755,11 +1779,12 @@ public final class BoardDb {
             nextId = rs.getLong("next_id");
         }
         try (PreparedStatement ps = conn.prepareStatement(
-                "INSERT INTO Location (location_id, title, address, tel, image_url) VALUES (?, ?, ?, NULL, ?)")) {
+                "INSERT INTO Location (location_id, title, address, detail_address, tel, image_url) VALUES (?, ?, ?, ?, NULL, ?)")) {
             ps.setLong(1, nextId);
             ps.setString(2, title);
             ps.setString(3, address.isBlank() ? null : address);
-            ps.setString(4, imageUrl.isBlank() ? null : imageUrl);
+            ps.setString(4, detailAddress == null || detailAddress.isBlank() ? null : detailAddress);
+            ps.setString(5, imageUrl.isBlank() ? null : imageUrl);
             ps.executeUpdate();
             return nextId;
         }

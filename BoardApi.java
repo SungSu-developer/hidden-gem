@@ -686,6 +686,7 @@ public final class BoardApi {
                 body.get("content"),
                 body.get("locationTitle"),
                 body.get("address"),
+                body.get("detailAddress"),
                 body.get("category"),
                 body.get("imageUrl"));
         json(ex, 201, "{\"postId\":" + id + "}");
@@ -701,6 +702,7 @@ public final class BoardApi {
                 body.get("content"),
                 body.get("locationTitle"),
                 body.get("address"),
+                body.get("detailAddress"),
                 body.get("category"),
                 imageUrl);
         json(ex, 200, "{\"ok\":true,\"postId\":" + postId + "}");
@@ -852,6 +854,7 @@ public final class BoardApi {
                 .append(",\"locationId\":").append(post.get("locationId") == null ? "null" : post.get("locationId"))
                 .append(",\"locationTitle\":").append(q(str(post.get("locationTitle"))))
                 .append(",\"address\":").append(q(str(post.get("address"))))
+                .append(",\"detailAddress\":").append(q(str(post.get("detailAddress"))))
                 .append(",\"imageUrl\":").append(q(str(post.get("imageUrl"))))
                 .append(",\"recommendCount\":").append(post.get("recommendCount"))
                 .append(",\"replyCount\":").append(post.get("replyCount"))
