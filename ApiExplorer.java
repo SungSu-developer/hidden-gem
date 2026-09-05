@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 
@@ -39,7 +40,7 @@ import org.w3c.dom.NodeList;
  * {@code areaCd} 에 {@code all}(기본) 이면 시·도 17곳을 순회해 전국 시군구를 수집합니다.
  * {@code signguCd} 에 {@code -} 를 주면 해당 시·도의 시군구 전체를 조회합니다(기본값).
  * {@code numOfRows} 는 페이지 크기이며, {@code totalCount} 가 더 크면 다음 페이지를 자동 요청합니다.
- * 서비스키: 환경변수 {@code DATA_GO_KR_SERVICE_KEY} 우선.
+ * 서비스키: {@code db.properties}의 {@code tour.service.key}, 없으면 환경변수 {@code DATA_GO_KR_SERVICE_KEY}.
  */
 public class ApiExplorer {
 
@@ -77,9 +78,10 @@ public class ApiExplorer {
         String defaultIx = expenditure ? "2201" : "2101";
         String ixCd = argOr(args, i, defaultIx);
 
-        String serviceKeyRaw = System.getenv("DATA_GO_KR_SERVICE_KEY");
+        String serviceKeyRaw = loadTourServiceKey();
         if (serviceKeyRaw == null || serviceKeyRaw.isBlank()) {
-            serviceKeyRaw = "66a478965dedc52ede9955fb2313a277f384963cc354e8d1e4ea289fb0189d78";
+            throw new IllegalStateException(
+                    "tour.service.key 가 없습니다. db.properties 또는 DATA_GO_KR_SERVICE_KEY 를 설정하세요.");
         }
         String serviceKey = URLEncoder.encode(serviceKeyRaw, StandardCharsets.UTF_8);
         String mobileApp = enc("AppTest");
@@ -487,5 +489,28 @@ public class ApiExplorer {
             sb.append("... (총 ").append(lines.length).append(" 줄)\n");
         }
         return sb.toString();
+    }
+
+    private static String loadTourServiceKey() {
+        try {
+            Path p = Path.of("db.properties");
+            if (Files.isRegularFile(p)) {
+                Properties props = new Properties();
+                try (InputStream in = Files.newInputStream(p)) {
+                    props.load(in);
+                }
+                String v = props.getProperty("tour.service.key");
+                if (v != null && !v.isBlank()) {
+                    return v.trim();
+                }
+            }
+        } catch (Exception ignored) {
+            // fall through
+        }
+        String key = System.getenv("TOUR_GO_KR_SERVICE_KEY");
+        if (key == null || key.isBlank()) {
+            key = System.getenv("DATA_GO_KR_SERVICE_KEY");
+        }
+        return key == null ? "" : key.trim();
     }
 }

@@ -172,6 +172,255 @@ body {
   display: block;
 }
 
+/* ── 가이드 배너 (AI / 계획 공유) ── */
+.guide-banner {
+  margin-bottom: 1rem;
+}
+
+.guide-banner--ai {
+  position: relative;
+  border-radius: 15px;
+  overflow: hidden;
+  min-height: 280px;
+  background: #1a1a1a;
+}
+
+.guide-banner-ai-media {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(0deg, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.35)),
+    url("/assets/AI.png") center / cover no-repeat;
+}
+
+.guide-banner-ai-inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  gap: 1.5rem;
+  align-items: center;
+  padding: 2rem 2.25rem;
+}
+
+.guide-banner-ai-copy {
+  color: #f4f4f5;
+}
+
+.guide-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  padding: 0.35rem 0.9rem;
+  border-radius: 9999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.guide-pill::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: #ffd600;
+  flex-shrink: 0;
+}
+
+.guide-pill--light {
+  background: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  color: #1a1a1a;
+  backdrop-filter: blur(6px);
+}
+
+.guide-pill--dark {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  backdrop-filter: blur(6px);
+}
+
+.guide-banner-title {
+  margin: 0;
+  font-size: clamp(1.6rem, 2.8vw, 2.2rem);
+  font-weight: 900;
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+}
+
+.guide-banner-lead {
+  margin: 0.85rem 0 0;
+  font-size: 1rem;
+  line-height: 1.6;
+  opacity: 0.92;
+}
+
+.guide-feature-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.guide-feature-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  padding: 0.85rem 1rem;
+  background: rgba(244, 244, 245, 0.88);
+  border-radius: 24px;
+  backdrop-filter: blur(6px);
+}
+
+.guide-feature-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 50px;
+  height: 50px;
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 16px;
+  font-size: 1.25rem;
+}
+
+.guide-feature-card strong {
+  display: block;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.guide-feature-card p {
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: #1a1a1a;
+}
+
+.guide-banner--courses {
+  position: relative;
+  overflow: hidden;
+  border-radius: 40px;
+  min-height: 280px;
+  background: #1a1a1a;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
+
+.guide-banner-courses-media {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(0deg, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)),
+    url("/assets/plan.png") center / cover no-repeat;
+  opacity: 0.55;
+}
+
+.guide-banner-courses-corner {
+  position: absolute;
+  right: 2rem;
+  bottom: 1.75rem;
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  z-index: 2;
+  pointer-events: none;
+  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.35));
+}
+
+.guide-banner-courses-glow {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(50px);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.guide-banner-courses-glow--yellow {
+  width: 220px;
+  height: 220px;
+  right: 1rem;
+  top: 0.5rem;
+  background: #ffd600;
+  opacity: 0.2;
+}
+
+.guide-banner-courses-glow--blue {
+  width: 180px;
+  height: 180px;
+  left: 0;
+  bottom: 0;
+  background: #3b82f6;
+  opacity: 0.1;
+  filter: blur(40px);
+}
+
+.guide-banner-courses-inner {
+  position: relative;
+  z-index: 3;
+  padding: 2.5rem 2rem 2rem;
+  max-width: 640px;
+}
+
+.guide-banner-courses-title {
+  margin: 0;
+  font-size: clamp(1.35rem, 2.5vw, 2rem);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: #f9e000;
+}
+
+.guide-banner-courses-lead {
+  margin: 1rem 0 0;
+  font-size: 1.05rem;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.guide-banner-cta {
+  margin-top: 1.5rem;
+  padding: 1rem 2rem;
+  border: none;
+  border-radius: 16px;
+  background: #f9e000;
+  color: #000;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 900;
+  cursor: pointer;
+  box-shadow: 0 10px 20px -10px rgba(249, 224, 0, 0.5);
+}
+
+.guide-banner-cta:hover {
+  filter: brightness(1.03);
+}
+
+@media (max-width: 900px) {
+  .guide-banner-ai-inner {
+    grid-template-columns: 1fr;
+    padding: 1.5rem;
+  }
+
+  .guide-banner-courses-inner {
+    padding: 1.75rem 1.25rem;
+    max-width: calc(100% - 5rem);
+  }
+
+  .guide-banner-courses-corner {
+    right: 1rem;
+    bottom: 1rem;
+    width: 72px;
+    height: 72px;
+  }
+}
+
 .ai-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
