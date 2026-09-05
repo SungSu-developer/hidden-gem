@@ -42,7 +42,7 @@ import org.w3c.dom.NodeList;
  * 웹 UI + REST API — 외국인에게 상대적으로 알려졌지만 내국인에게는 덜 알려진 유료관광지(히든젬) 탐색.
  * <p>
  * 점수: {@code ln(1+foreign) × (domesticRank − foreignRank)}<br>
- * 필터: 숙박·레저 키워드 제외, foreign≥100, domesticRank&gt;50
+ * 필터: 숙박·레저 키워드 제외, 지역(sido/gungu) — 방문객 0인 곳도 포함
  * <p>
  * 데이터: openapi.tour.go.kr 유료관광지방문객수조회
  * 실행: {@code start.bat} 또는 {@code start.sh}
@@ -54,10 +54,8 @@ public class HiddenGemServer {
 
     private static final int PORT = 8080;
     private static final Path WEB_ROOT = Path.of("web");
-    /** 표본이 너무 적은 곳 제외 */
-    private static final double MIN_FOREIGN_VISITORS = 50;
-    /** 내국인에게 이미 유명한 곳 제외 (순위 1=최다) */
-    private static final int MIN_DOMESTIC_RANK = 0;
+    /** 배너·아이콘 등 (web/assets 와 동일 URL — 여기를 우선 서빙) */
+    private static final Path ASSETS_ROOT = Path.of("assets");
     private static final Pattern BLOCKED_NAME = Pattern.compile(
             "리조트|호텔|워터파크|케리비안|콘도|모텔|펜션|한솔오크|플레이도시");
     /**
@@ -493,8 +491,8 @@ public class HiddenGemServer {
         if ("/".equals(path)) {
             path = "/index.html";
         }
-        Path file = WEB_ROOT.resolve(path.replaceFirst("^/", "")).normalize();
-        if (!file.startsWith(WEB_ROOT) || !Files.isRegularFile(file)) {
+        Path file = resolveStaticFile(path);
+        if (file == null) {
             if (path.startsWith("/api/")) {
                 respond(ex, 404, "application/json; charset=utf-8",
                         jsonError("Not Found").getBytes(StandardCharsets.UTF_8));
@@ -504,7 +502,28 @@ public class HiddenGemServer {
             return;
         }
         String ct = contentType(file.getFileName().toString());
-        respond(ex, 200, ct, Files.readAllBytes(file));
+        byte[] body = Files.readAllBytes(file);
+        if (path.startsWith("/assets/")) {
+            ex.getResponseHeaders().set("Cache-Control", "no-cache");
+        }
+        respond(ex, 200, ct, body);
+    }
+
+    /** {@code /assets/*} 는 프로젝트 {@code assets/} 우선, 그 외는 {@code web/} */
+    private static Path resolveStaticFile(String path) {
+        String rel = path.replaceFirst("^/", "");
+        if (rel.startsWith("assets/")) {
+            String assetRel = rel.substring("assets/".length());
+            Path inAssets = ASSETS_ROOT.resolve(assetRel).normalize();
+            if (inAssets.startsWith(ASSETS_ROOT) && Files.isRegularFile(inAssets)) {
+                return inAssets;
+            }
+        }
+        Path inWeb = WEB_ROOT.resolve(rel).normalize();
+        if (inWeb.startsWith(WEB_ROOT) && Files.isRegularFile(inWeb)) {
+            return inWeb;
+        }
+        return null;
     }
 
     private static void handleThumbnails(HttpExchange ex) throws IOException {
@@ -687,30 +706,7 @@ public class HiddenGemServer {
             }
         }
         List<Attraction> all = loadYmData(ym);
-        Map<String, Integer> foreignRank = rankMap(all, a -> a.foreign);
-        Map<String, Integer> domesticRank = rankMap(all, a -> a.domestic);
-
-        List<HiddenGem> gems = new ArrayList<>();
-        for (Attraction a : all) {
-            if (a.foreign < MIN_FOREIGN_VISITORS || a.domestic <= 0) {
-                continue;
-            }
-            if (isBlockedName(a.resNm)) {
-                continue;
-            }
-            int fRank = foreignRank.getOrDefault(a.key(), all.size());
-            int dRank = domesticRank.getOrDefault(a.key(), all.size());
-            if (dRank <= MIN_DOMESTIC_RANK) {
-                continue;
-            }
-            int gap = dRank - fRank;
-            double share = a.foreign / (a.foreign + a.domestic) * 100.0;
-            double score = Math.log(1.0 + a.foreign) * gap;
-            gems.add(new HiddenGem(a, share, dRank, fRank, score));
-        }
-        gems.sort(Comparator
-                .comparingDouble((HiddenGem g) -> g.gemScore).reversed()
-                .thenComparing(Comparator.comparingDouble((HiddenGem g) -> g.foreignShare).reversed()));
+        List<HiddenGem> gems = buildGemsFromAttractions(all);
 
         if (!sido.isBlank() || !gungu.isBlank()) {
             gems.removeIf(g -> {
@@ -760,8 +756,8 @@ public class HiddenGemServer {
                     .append(",\"domesticVisitors\":").append(round(g.domestic))
                     .append(",\"foreignVisitors\":").append(round(g.foreign))
                     .append(",\"foreignShare\":").append(round(g.foreignShare))
-                    .append(",\"domesticRank\":").append(g.domesticRank)
-                    .append(",\"foreignRank\":").append(g.foreignRank)
+                    .append(",\"domesticRank\":").append(g.domestic > 0 ? g.domesticRank : "null")
+                    .append(",\"foreignRank\":").append(g.foreign > 0 ? g.foreignRank : "null")
                     .append(",\"gemScore\":").append(round(g.gemScore));
             if (enrich) {
                 String thumb = cachedThumbnail(g.resNm, g.sido);
@@ -1402,9 +1398,6 @@ public class HiddenGemServer {
         }
         double foreign = parseDouble(childText(item, "csForCnt"));
         double domestic = parseDouble(childText(item, "csNatCnt"));
-        if (foreign <= 0 && domestic <= 0) {
-            return null;
-        }
         return new Attraction(
                 resNm,
                 childText(item, "sido"),
@@ -2024,32 +2017,32 @@ public class HiddenGemServer {
     }
 
     private static List<HiddenGem> buildGemList(List<Attraction> all, int limit) {
+        List<HiddenGem> gems = buildGemsFromAttractions(all);
+        if (gems.size() > limit) {
+            gems = new ArrayList<>(gems.subList(0, limit));
+        }
+        return gems;
+    }
+
+    private static List<HiddenGem> buildGemsFromAttractions(List<Attraction> all) {
         Map<String, Integer> foreignRank = rankMap(all, a -> a.foreign);
         Map<String, Integer> domesticRank = rankMap(all, a -> a.domestic);
         List<HiddenGem> gems = new ArrayList<>();
         for (Attraction a : all) {
-            if (a.foreign < MIN_FOREIGN_VISITORS || a.domestic <= 0) {
-                continue;
-            }
             if (isBlockedName(a.resNm)) {
                 continue;
             }
-            int fRank = foreignRank.getOrDefault(a.key(), all.size());
-            int dRank = domesticRank.getOrDefault(a.key(), all.size());
-            if (dRank <= MIN_DOMESTIC_RANK) {
-                continue;
-            }
+            int fRank = a.foreign > 0 ? foreignRank.getOrDefault(a.key(), 0) : 0;
+            int dRank = a.domestic > 0 ? domesticRank.getOrDefault(a.key(), 0) : 0;
+            double total = a.foreign + a.domestic;
+            double share = total > 0 ? a.foreign / total * 100.0 : 0;
             int gap = dRank - fRank;
-            double share = a.foreign / (a.foreign + a.domestic) * 100.0;
-            double score = Math.log(1.0 + a.foreign) * gap;
+            double score = Math.log(1.0 + Math.max(a.foreign, 0)) * gap;
             gems.add(new HiddenGem(a, share, dRank, fRank, score));
         }
         gems.sort(Comparator
                 .comparingDouble((HiddenGem g) -> g.gemScore).reversed()
                 .thenComparing(Comparator.comparingDouble((HiddenGem g) -> g.foreignShare).reversed()));
-        if (gems.size() > limit) {
-            gems = new ArrayList<>(gems.subList(0, limit));
-        }
         return gems;
     }
 
@@ -2110,7 +2103,12 @@ public class HiddenGemServer {
     }
 
     private static Map<String, Integer> rankMap(List<Attraction> items, java.util.function.ToDoubleFunction<Attraction> key) {
-        List<Attraction> sorted = new ArrayList<>(items);
+        List<Attraction> sorted = new ArrayList<>();
+        for (Attraction a : items) {
+            if (key.applyAsDouble(a) > 0) {
+                sorted.add(a);
+            }
+        }
         sorted.sort(Comparator.comparingDouble(key).reversed());
         Map<String, Integer> ranks = new HashMap<>();
         for (int i = 0; i < sorted.size(); i++) {
@@ -2210,14 +2208,15 @@ public class HiddenGemServer {
     }
 
     private static String tourServiceKeyRaw() {
-        String key = System.getenv("TOUR_GO_KR_SERVICE_KEY");
+        String key = readProp("tour.service.key", System.getenv("TOUR_GO_KR_SERVICE_KEY"));
         if (key == null || key.isBlank()) {
             key = System.getenv("DATA_GO_KR_SERVICE_KEY");
         }
         if (key == null || key.isBlank()) {
-            key = "66a478965dedc52ede9955fb2313a277f384963cc354e8d1e4ea289fb0189d78";
+            throw new IllegalStateException(
+                    "tour.service.key 가 없습니다. db.properties 또는 TOUR_GO_KR_SERVICE_KEY 를 설정하세요.");
         }
-        return key;
+        return key.trim();
     }
 
     private static String enc(String raw) {

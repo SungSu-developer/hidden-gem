@@ -667,6 +667,14 @@ function setMyView(view) {
   loadMyPage();
 }
 
+function goToMyCourses() {
+  myView = "courses";
+  document.querySelectorAll(".my-subtab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.myView === "courses");
+  });
+  switchTab("my");
+}
+
 function fillAvatar(el, url, name) {
   const letter = String(name || "?").charAt(0);
   if (url) {
@@ -752,18 +760,29 @@ function formatDist(m) {
   return Math.round(n) + "m";
 }
 
+function gemHasRank(gem) {
+  return Number(gem.foreignVisitors) > 0 && Number(gem.domesticVisitors) > 0;
+}
+
 function sortGems(gems, sortKey) {
   const sorted = [...gems];
-  switch (sortKey) {
-    case "foreign":
-      sorted.sort((a, b) => b.foreignVisitors - a.foreignVisitors);
-      break;
-    case "domestic":
-      sorted.sort((a, b) => b.domesticVisitors - a.domesticVisitors);
-      break;
-    default:
-      sorted.sort((a, b) => b.gemScore - a.gemScore);
-  }
+  const byVisitorsOrScore = (a, b) => {
+    switch (sortKey) {
+      case "foreign":
+        return b.foreignVisitors - a.foreignVisitors;
+      case "domestic":
+        return b.domesticVisitors - a.domesticVisitors;
+      default:
+        return b.gemScore - a.gemScore;
+    }
+  };
+  // 순위(-) 없는 항목은 숫자 순위 뒤로
+  sorted.sort((a, b) => {
+    const ar = gemHasRank(a) ? 0 : 1;
+    const br = gemHasRank(b) ? 0 : 1;
+    if (ar !== br) return ar - br;
+    return byVisitorsOrScore(a, b);
+  });
   return sorted;
 }
 
@@ -1061,16 +1080,21 @@ function renderGems(gems) {
   }
 
   const sorted = sortGems(gems, sortSelect.value);
+  let ranked = 0;
 
   resultsEl.innerHTML = sorted
-    .map((gem, index) => {
+    .map((gem) => {
       const location = displayGemLocation(gem);
       const name = displayGemName(gem);
       const key = gemKey(gem);
-      const rank = index + 1;
+      const canRank = gemHasRank(gem);
+      const rank = canRank ? ++ranked : null;
+      const rankHtml = canRank
+        ? `<span class="gem-rank" aria-label="${rank}위">${rank}</span>`
+        : `<span class="gem-rank gem-rank--na" aria-label="순위 없음">-</span>`;
       return `
         <li class="post-item gem-item" data-key="${escapeHtml(key)}" role="button" tabindex="0">
-          <span class="gem-rank" aria-label="${rank}위">${rank}</span>
+          ${rankHtml}
           <div class="post-thumb" aria-hidden="true">
             ${thumbHtml(gem)}
           </div>
@@ -1242,16 +1266,98 @@ function readAiSessionCache(key) {
 function writeAiSessionCache(key, gems) {
   try {
     const all = readAiSessionStore();
-    all[key] = (gems || []).map((g) => {
-      const copy = { ...g };
-      const detail = placeDetailCache.get(gemKey(g));
-      if (detail) copy.detail = detail;
-      return copy;
-    });
+    all[key] = (gems || []).map(slimGemForSession);
     sessionStorage.setItem(AI_SESSION_CACHE_KEY, JSON.stringify(all));
   } catch {
-    /* quota 등 무시 */
+    /* quota 등 — 상세 JSON 없이 한 번 더 시도 */
+    try {
+      const all = readAiSessionStore();
+      all[key] = (gems || []).map((g) => {
+        const slim = slimGemForSession(g);
+        delete slim.detail;
+        return slim;
+      });
+      sessionStorage.setItem(AI_SESSION_CACHE_KEY, JSON.stringify(all));
+    } catch {
+      /* 무시 */
+    }
   }
+}
+
+/** sessionStorage 용량 절약 — 전체 detail JSON 대신 표시에 필요한 필드만 */
+function slimGemForSession(g) {
+  const copy = {
+    resNm: g.resNm,
+    sido: g.sido,
+    gungu: g.gungu,
+    addrCd: g.addrCd,
+    domesticVisitors: g.domesticVisitors,
+    foreignVisitors: g.foreignVisitors,
+    foreignShare: g.foreignShare,
+    domesticRank: g.domesticRank,
+    foreignRank: g.foreignRank,
+    gemScore: g.gemScore,
+    thumbnail: g.thumbnail || "",
+    resNmEn: g.resNmEn,
+  };
+  const detail = placeDetailCache.get(gemKey(g)) || g.detail;
+  if (detail && detail.found) {
+    copy.detail = {
+      found: true,
+      image: detail.image || "",
+      addr: detail.addr || detail.address || "",
+      contentId: detail.contentId || "",
+      title: detail.title || "",
+    };
+  }
+  return copy;
+}
+
+function publishAiGemsForKey(key, gems) {
+  const ready = (gems || []).slice();
+  aiGemsByKey.set(key, ready);
+  writeAiSessionCache(key, ready);
+  if (aiCacheKey(sidoSelect?.value || "") !== key) return;
+  currentGems = ready;
+  aiGemsPool = ready.slice();
+  applyGemSearchFilter();
+  renderGems(currentGems);
+  if (!currentGems.length) {
+    const q = document.getElementById("gemSearch")?.value?.trim();
+    showAiEmpty(sidoSelect?.value || "", !!q);
+  }
+}
+
+async function enrichGemsInBackground(gems, key) {
+  const needThumbs = gems.filter((g) => !g.thumbnail);
+  if (needThumbs.length) {
+    await loadThumbnails(needThumbs);
+    const ready = gemsReadyForDisplay(gems);
+    if (ready.length) publishAiGemsForKey(key, ready);
+  }
+
+  const queue = gems.filter((g) => !placeDetailCache.has(gemKey(g)));
+  if (!queue.length) return;
+
+  const worker = async () => {
+    while (queue.length) {
+      const gem = queue.shift();
+      if (!gem) break;
+      try {
+        await fetchPlaceDetail(gem);
+      } catch {
+        /* 개별 실패는 무시 */
+      }
+      const ready = gemsReadyForDisplay(gems);
+      if (ready.length) publishAiGemsForKey(key, ready);
+    }
+  };
+
+  const n = Math.min(PLACE_PREFETCH_CONCURRENCY, queue.length);
+  await Promise.all(Array.from({ length: n }, () => worker()));
+
+  const ready = gemsReadyForDisplay(gems);
+  if (ready.length) publishAiGemsForKey(key, ready);
 }
 
 function showAiEmpty(sido, searchEmpty) {
@@ -1303,10 +1409,9 @@ async function loadHiddenGems(options = {}) {
 
   if (!force) {
     const cached = readAiSessionCache(key);
-    if (cached) {
+    if (cached?.length) {
       aiGemsByKey.set(key, cached.slice());
       applyCachedAiGems(cached);
-      if (cached.length) prefetchPlaceDetails(cached).catch(() => {});
       return;
     }
   }
@@ -1343,41 +1448,35 @@ async function loadHiddenGems(options = {}) {
       // 서버가 캐시에서 붙여 준 사진·상세를 브라우저 캐시에 바로 반영
       hydrateGemsFromServerPayload(gems);
 
-      let enriched = gemsReadyForDisplay(gems);
+      let ready = gemsReadyForDisplay(gems);
       const needThumbs = gems.filter((g) => !g.thumbnail);
       const needDetails = gems.filter((g) => !placeDetailCache.has(gemKey(g)));
       const needWork = needThumbs.length > 0 || needDetails.length > 0;
 
-      if (needWork) {
-        showStatus(
-          statusEl,
-          uiLang === "en" ? "Loading AI picks" : "AI 계산중",
-          "info"
-        );
-        if (needThumbs.length) {
-          await loadThumbnails(needThumbs);
-        }
-        if (needDetails.length) {
-          await prefetchPlaceDetails(gems);
-        }
-        enriched = gemsReadyForDisplay(gems);
+      if (ready.length) {
+        publishAiGemsForKey(key, ready);
+        hideStatus(statusEl);
       }
 
-      // 로딩 중에 다른 지역으로 바뀌었으면 화면은 건드리지 않고 캐시만 저장
+      if (needWork) {
+        if (!ready.length) {
+          showStatus(
+            statusEl,
+            uiLang === "en" ? "Loading AI picks" : "AI 계산중",
+            "info"
+          );
+        }
+        await enrichGemsInBackground(gems, key);
+      }
+
+      ready = gemsReadyForDisplay(gems);
       const stillCurrent = aiCacheKey(sidoSelect?.value || "") === key;
+      if (!stillCurrent) {
+        if (ready.length) publishAiGemsForKey(key, ready);
+        return;
+      }
 
-      // 사진+상세 있는 것만, 개수 제한 없이 전부
-      gems = enriched.length ? enriched : [];
-
-      aiGemsByKey.set(key, gems.slice());
-      writeAiSessionCache(key, gems);
-
-      if (!stillCurrent) return;
-
-      currentGems = gems;
-      aiGemsPool = gems.slice();
-      applyGemSearchFilter();
-      if (uiLang === "en" && currentGems.length) {
+      if (uiLang === "en" && ready.length) {
         showStatus(statusEl, t("translating"), "info");
         try {
           await translateCurrentGems();
@@ -1386,10 +1485,14 @@ async function loadHiddenGems(options = {}) {
         }
       }
       hideStatus(statusEl);
-      renderGems(currentGems);
-      if (!currentGems.length) {
-        const q = document.getElementById("gemSearch")?.value?.trim();
-        showAiEmpty(sido, !!q);
+      if (ready.length) {
+        publishAiGemsForKey(key, ready);
+      } else {
+        currentGems = [];
+        aiGemsPool = [];
+        aiGemsByKey.set(key, []);
+        writeAiSessionCache(key, []);
+        showAiEmpty(sido, false);
       }
     } catch (e) {
       if (aiCacheKey(sidoSelect?.value || "") === key) {
@@ -4006,6 +4109,7 @@ document.getElementById("courseSortPublic")?.addEventListener("change", () => {
 document.getElementById("courseSearchBtnPublic")?.addEventListener("click", () => {
   renderPublicCoursesFiltered();
 });
+document.getElementById("goMyCoursesBtn")?.addEventListener("click", () => goToMyCourses());
 document.getElementById("courseSearchPublic")?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
