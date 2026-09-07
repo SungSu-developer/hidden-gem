@@ -1165,17 +1165,62 @@ public class HiddenGemServer {
         if (addr1 == null || addr1.isBlank()) {
             return sido.isBlank() && gungu.isBlank();
         }
-        if (!gungu.isBlank() && !addr1.contains(gungu)) {
+        if (!gungu.isBlank() && !regionTokenMatches(addr1, gungu)) {
             return false;
         }
         if (sido.isBlank()) {
             return true;
         }
-        if (addr1.contains(sido)) {
+        return regionTokenMatches(addr1, sido);
+    }
+
+    /** 특례시·특별자치도 등 통계 행정명 ↔ TourAPI 주소 표기 차이 흡수 */
+    private static boolean regionTokenMatches(String addr, String region) {
+        if (region == null || region.isBlank()) {
             return true;
         }
-        String sidoShort = shortenSido(sido);
-        return !sidoShort.isBlank() && addr1.contains(sidoShort);
+        if (addr.contains(region)) {
+            return true;
+        }
+        for (String cand : expandRegionNames(region)) {
+            if (!cand.isBlank() && addr.contains(cand)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<String> expandRegionNames(String region) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (region == null || region.isBlank()) {
+            return List.of();
+        }
+        out.add(region);
+        if (region.endsWith("특례시")) {
+            String base = region.substring(0, region.length() - "특례시".length());
+            out.add(base + "시");
+            out.add(base);
+        }
+        if (region.endsWith("특별자치도")) {
+            String base = region.substring(0, region.length() - "특별자치도".length());
+            out.add(base + "도");
+            out.add(base);
+            if ("전북".equals(base)) {
+                out.add("전라북도");
+            } else if ("전남".equals(base)) {
+                out.add("전라남도");
+            }
+        }
+        if (region.endsWith("특별자치시")) {
+            String base = region.substring(0, region.length() - "특별자치시".length());
+            out.add(base + "시");
+            out.add(base);
+        }
+        String shortSido = shortenSido(region);
+        if (!shortSido.isBlank()) {
+            out.add(shortSido);
+        }
+        return new ArrayList<>(out);
     }
 
     private static Map<String, String> fetchDetailCommon(String contentId) throws Exception {
