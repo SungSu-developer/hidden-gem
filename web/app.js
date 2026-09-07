@@ -764,6 +764,37 @@ function gemHasRank(gem) {
   return Number(gem.foreignVisitors) > 0 && Number(gem.domesticVisitors) > 0;
 }
 
+/** 순위(-) 구간: 외국인 0이면 내국인 많은 순, 그다음 외국인만 있는 곳, 둘 다 0은 맨 뒤 */
+function compareUnrankedGems(a, b, sortKey) {
+  const ad = Number(a.domesticVisitors) || 0;
+  const af = Number(a.foreignVisitors) || 0;
+  const bd = Number(b.domesticVisitors) || 0;
+  const bf = Number(b.foreignVisitors) || 0;
+
+  if (sortKey === "foreign") return bf - af;
+  if (sortKey === "domestic") return bd - ad;
+
+  const tier = (d, f) => {
+    if (f <= 0 && d > 0) return 0; // 외국인 0 · 내국인 있음 → 우선
+    if (d <= 0 && f > 0) return 1; // 내국인 0 · 외국인 있음
+    if (d <= 0 && f <= 0) return 2; // 둘 다 0
+    return 0; // 한쪽만 0이 아닌 비정상 케이스도 앞쪽
+  };
+  const ta = tier(ad, af);
+  const tb = tier(bd, bf);
+  if (ta !== tb) return ta - tb;
+
+  if (ta === 0) {
+    if (bd !== ad) return bd - ad; // 내국인 많은 순
+    return bf - af;
+  }
+  if (ta === 1) {
+    if (bf !== af) return bf - af;
+    return bd - ad;
+  }
+  return (Number(b.gemScore) || 0) - (Number(a.gemScore) || 0);
+}
+
 function sortGems(gems, sortKey) {
   const sorted = [...gems];
   const byVisitorsOrScore = (a, b) => {
@@ -776,11 +807,12 @@ function sortGems(gems, sortKey) {
         return b.gemScore - a.gemScore;
     }
   };
-  // 순위(-) 없는 항목은 숫자 순위 뒤로
+  // 숫자 순위 먼저, 그다음 (-) 구간은 가볼 만한 순
   sorted.sort((a, b) => {
     const ar = gemHasRank(a) ? 0 : 1;
     const br = gemHasRank(b) ? 0 : 1;
     if (ar !== br) return ar - br;
+    if (ar === 1) return compareUnrankedGems(a, b, sortKey);
     return byVisitorsOrScore(a, b);
   });
   return sorted;
