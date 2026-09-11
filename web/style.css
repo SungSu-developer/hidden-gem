@@ -1111,12 +1111,17 @@ body {
   overflow: hidden;
   border: 1px solid var(--border);
   background: var(--bg);
+  position: relative;
+  aspect-ratio: 4 / 3;
+  max-height: 360px;
 }
 
 .thread-media img {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
-  max-height: 320px;
+  height: 100%;
   object-fit: cover;
 }
 
@@ -2386,12 +2391,17 @@ dialog.course-detail-modal::backdrop {
   border-radius: 12px;
   overflow: hidden;
   background: var(--bg);
+  position: relative;
+  aspect-ratio: 16 / 10;
+  max-height: min(52vh, 420px);
 }
 
 .detail-image img {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
-  max-height: 240px;
+  height: 100%;
   object-fit: cover;
 }
 
