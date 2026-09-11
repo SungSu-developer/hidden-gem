@@ -2038,8 +2038,9 @@ async function fetchCourseRoute(spots) {
   const payload = {
     spots: (spots || []).map((s) => ({
       title: s.locationTitle || s.title || "",
-      locationTitle: s.locationTitle || "",
+      locationTitle: s.locationTitle || s.title || "",
       address: s.address || "",
+      detailAddress: s.detailAddress || "",
       sido: s.sido || "",
       resNm: s.resNm || "",
     })),
@@ -2356,13 +2357,23 @@ async function resolveDestCoords(gem, data) {
   }
   const cfg = await fetchPublicConfig();
   await loadKakaoMapsSdk(cfg.kakaoJsKey || "");
-  const q = [gem.sido, gem.gungu, gem.resNm || data.title || data.addr]
-    .filter(Boolean)
-    .join(" ");
-  if (!q.trim()) {
-    throw new Error(uiLang === "en" ? "Destination coordinates unavailable." : "도착지 좌표가 없습니다.");
+  const candidates = [
+    data.addr,
+    [gem.sido, gem.gungu, gem.resNm || data.title].filter(Boolean).join(" "),
+    [gem.sido, data.title || gem.resNm].filter(Boolean).join(" "),
+    data.title || gem.resNm,
+  ]
+    .map((q) => String(q || "").trim())
+    .filter(Boolean);
+  let lastErr = null;
+  for (const q of candidates) {
+    try {
+      return await geocodePlaceWithKakao(q);
+    } catch (err) {
+      lastErr = err;
+    }
   }
-  return geocodePlaceWithKakao(q.trim());
+  throw lastErr || new Error(uiLang === "en" ? "Destination coordinates unavailable." : "도착지 좌표가 없습니다.");
 }
 
 function jsonp(url) {
@@ -3897,33 +3908,43 @@ document.getElementById("addPostToCourseBtn")?.addEventListener("click", () => {
 
 function spotPayloadFromPlace(gem, data) {
   const title =
-    (uiLang === "en" ? data?.titleEn || data?.title : data?.title) ||
+    data?.title ||
     displayGemName(gem) ||
     gem.resNm ||
     "장소";
-  const address =
-    (uiLang === "en" ? data?.addrEn || data?.addr : data?.addr) ||
-    displayGemLocation(gem) ||
-    "";
+  // 지도 검색은 한글 주소가 안정적 — 영문 번역 주소(addrEn)는 쓰지 않음
+  const address = data?.addr || displayGemLocation(gem) || "";
+  let sido = gem.sido || "";
+  if (!sido && address) {
+    const m = String(address).match(/^(\S+?(?:특별시|광역시|특별자치시|특별자치도|도))/);
+    if (m) sido = m[1];
+  }
   return {
     title: String(title),
+    locationTitle: String(title),
     address: String(address),
     imageUrl: data?.image || gem.thumbnail || "",
     note: "",
-    resNm: gem.resNm || "",
-    sido: gem.sido || "",
+    resNm: gem.resNm || data?.title || "",
+    sido: sido,
   };
 }
 
 function spotPayloadFromPost(post) {
+  const sido = post.address || "";
+  const detail = post.detailAddress || "";
+  const fullAddr = [sido, detail].filter(Boolean).join(" ").trim();
+  const title = post.locationTitle || post.content?.slice(0, 40) || `게시글 #${post.postId}`;
   return {
     postId: post.postId,
-    title: post.locationTitle || post.content?.slice(0, 40) || `게시글 #${post.postId}`,
-    address: [post.address, post.detailAddress].filter(Boolean).join(" ").trim(),
+    title: title,
+    locationTitle: title,
+    address: fullAddr,
+    detailAddress: detail,
     imageUrl: post.imageUrl || "",
     note: (post.content || "").slice(0, 200),
     resNm: "",
-    sido: post.address || "",
+    sido: sido,
   };
 }
 
