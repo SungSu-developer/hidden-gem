@@ -1122,7 +1122,7 @@ public final class BoardDb {
                        s.image_url AS spot_image, s.note AS spot_note, s.res_nm, s.sido,
                        p.post_id AS p_post_id, p.member_id, p.content, p.reg_date, p.category,
                        m.nickname, m.profile_image,
-                       l.location_id, l.title AS location_title, l.address, l.image_url,
+                       l.location_id, l.title AS location_title, l.address, l.detail_address, l.image_url,
                        (SELECT COUNT(*) FROM Recommendation r WHERE r.post_id = p.post_id) AS recommend_count,
                        (SELECT COUNT(*) FROM Reply rp WHERE rp.post_id = p.post_id) AS reply_count
                 FROM CourseSpot s
@@ -1150,7 +1150,13 @@ public final class BoardDb {
                                 toPublicProfileImage(rs.getString("member_id"), rs.getString("profile_image")));
                         spot.put("content", nullToEmpty(rs.getString("content")));
                         spot.put("locationTitle", nullToEmpty(rs.getString("location_title")));
-                        spot.put("address", nullToEmpty(rs.getString("address")));
+                        // Location.address 는 시·도, detail_address 가 도로명/지번 — 지도 검색엔 둘 다 필요
+                        String sidoAddr = nullToEmpty(rs.getString("address"));
+                        String detailAddr = nullToEmpty(rs.getString("detail_address"));
+                        String fullAddr = joinAddressParts(sidoAddr, detailAddr);
+                        spot.put("address", fullAddr);
+                        spot.put("detailAddress", detailAddr);
+                        spot.put("sido", sidoAddr);
                         spot.put("imageUrl", nullToEmpty(rs.getString("image_url")));
                         spot.put("recommendCount", rs.getLong("recommend_count"));
                         if (viewerId != null && !viewerId.isBlank()) {
@@ -1788,6 +1794,31 @@ public final class BoardDb {
             ps.executeUpdate();
             return nextId;
         }
+    }
+
+    private static String joinAddressParts(String sidoOrRegion, String detail) {
+        String a = sidoOrRegion == null ? "" : sidoOrRegion.trim();
+        String b = detail == null ? "" : detail.trim();
+        if (a.isEmpty()) return b;
+        if (b.isEmpty()) return a;
+        if (b.startsWith(a) || a.contains(b)) return b.length() >= a.length() ? b : a;
+        // "충청북도" + "충북 청주시…" → "충청북도 청주시…" (약칭 중복 제거)
+        String[][] pairs = {
+                {"서울특별시", "서울"}, {"부산광역시", "부산"}, {"대구광역시", "대구"},
+                {"인천광역시", "인천"}, {"광주광역시", "광주"}, {"대전광역시", "대전"},
+                {"울산광역시", "울산"}, {"세종특별자치시", "세종"}, {"경기도", "경기"},
+                {"강원특별자치도", "강원"}, {"강원도", "강원"}, {"충청북도", "충북"},
+                {"충청남도", "충남"}, {"전북특별자치도", "전북"}, {"전라북도", "전북"},
+                {"전라남도", "전남"}, {"경상북도", "경북"}, {"경상남도", "경남"},
+                {"제주특별자치도", "제주"}, {"제주도", "제주"}
+        };
+        for (String[] pair : pairs) {
+            if (a.equals(pair[0]) && (b.equals(pair[1]) || b.startsWith(pair[1] + " "))) {
+                String rest = b.equals(pair[1]) ? "" : b.substring(pair[1].length()).trim();
+                return rest.isEmpty() ? a : a + " " + rest;
+            }
+        }
+        return a + " " + b;
     }
 
     private static String nullToEmpty(String s) {

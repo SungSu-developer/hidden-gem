@@ -213,32 +213,30 @@ public class HiddenGemServer {
             StringBuilder spotsJson = new StringBuilder("[");
             for (int i = 0; i < spotsIn.size(); i++) {
                 Map<String, String> s = spotsIn.get(i);
-                String query = buildPlaceQuery(s);
-                double[] ll = naverGeocode(clientId, clientSecret, query);
-                if (ll == null) {
-                    String placeOnly = firstNonBlank(s.get("locationTitle"), s.get("title"), s.get("resNm"));
-                    if (!placeOnly.isBlank() && !placeOnly.equals(query)) {
-                        ll = naverGeocode(clientId, clientSecret, placeOnly);
-                        if (ll != null) {
-                            query = placeOnly;
-                        }
-                    }
-                }
                 String title = firstNonBlank(
                         s.get("locationTitle"), s.get("title"), s.get("resNm"), "장소 " + (i + 1));
+                String usedQuery = "";
+                double[] ll = null;
+                for (String candidate : geocodeQueryCandidates(s)) {
+                    ll = naverGeocode(clientId, clientSecret, candidate);
+                    if (ll != null) {
+                        usedQuery = candidate;
+                        break;
+                    }
+                }
                 if (i > 0) {
                     spotsJson.append(',');
                 }
                 if (ll == null) {
                     spotsJson.append("{\"seq\":").append(i + 1)
                             .append(",\"title\":").append(q(title))
-                            .append(",\"query\":").append(q(query))
+                            .append(",\"query\":").append(q(firstNonBlank(usedQuery, buildPlaceQuery(s))))
                             .append(",\"found\":false}");
                     coords.add(null);
                 } else {
                     spotsJson.append("{\"seq\":").append(i + 1)
                             .append(",\"title\":").append(q(title))
-                            .append(",\"query\":").append(q(query))
+                            .append(",\"query\":").append(q(usedQuery))
                             .append(",\"found\":true")
                             .append(",\"lat\":").append(ll[0])
                             .append(",\"lng\":").append(ll[1])
@@ -272,16 +270,111 @@ public class HiddenGemServer {
 
     /** 게시글: 지역(address/sido) + 장소명 / AI: sido + resNm */
     private static String buildPlaceQuery(Map<String, String> s) {
-        String region = firstNonBlank(s.get("address"), s.get("sido"));
-        String place = firstNonBlank(s.get("locationTitle"), s.get("title"), s.get("resNm"));
-        if (!region.isBlank() && !place.isBlank()) {
-            // "서울특별시 광장시장"처럼 지역+장소명
-            if (place.contains(region) || region.contains(place)) {
-                return place;
-            }
-            return region + " " + place;
+        List<String> cands = geocodeQueryCandidates(s);
+        return cands.isEmpty() ? "" : cands.get(0);
+    }
+
+    /** 지오코딩 후보: 정규화 주소 → 상세주소 → 시·구+이름 → 이름 */
+    private static List<String> geocodeQueryCandidates(Map<String, String> s) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        String sido = normalizeKoreanAddress(nullToEmpty(s.get("sido")).trim());
+        String detail = normalizeKoreanAddress(nullToEmpty(s.get("detailAddress")).trim());
+        String address = normalizeKoreanAddress(firstNonBlank(s.get("address"), detail));
+        String place = firstNonBlank(s.get("locationTitle"), s.get("title"), s.get("resNm")).trim();
+
+        addGeocodeCandidate(out, address);
+        addGeocodeCandidate(out, detail);
+        if (!address.isBlank() && !place.isBlank() && !address.contains(place)) {
+            addGeocodeCandidate(out, address + " " + place);
         }
-        return firstNonBlank(place, region);
+
+        String city = extractCityToken(address.isBlank() ? detail : address);
+        if (!city.isBlank() && !place.isBlank()) {
+            addGeocodeCandidate(out, city + " " + place);
+        }
+        if (!sido.isBlank() && !place.isBlank()) {
+            addGeocodeCandidate(out, sido + " " + place);
+            if (!city.isBlank()) {
+                addGeocodeCandidate(out, sido + " " + city + " " + place);
+            }
+        }
+        addGeocodeCandidate(out, place);
+        // "수동 수암골" → "수암골" 같이 앞 수식어를 뺀 이름도 시도
+        if (place.contains(" ")) {
+            String[] parts = place.split("\\s+");
+            if (parts.length >= 2) {
+                addGeocodeCandidate(out, parts[parts.length - 1]);
+                if (!city.isBlank()) {
+                    addGeocodeCandidate(out, city + " " + parts[parts.length - 1]);
+                }
+                if (!sido.isBlank()) {
+                    addGeocodeCandidate(out, sido + " " + parts[parts.length - 1]);
+                }
+            }
+        }
+        return new ArrayList<>(out);
+    }
+
+    private static void addGeocodeCandidate(Set<String> out, String q) {
+        String n = normalizeKoreanAddress(q);
+        if (!n.isBlank()) {
+            out.add(n);
+        }
+    }
+
+    /** "충청북도 충북 청주시…" → "충청북도 청주시…" / 앞머리 "충북 " → "충청북도 " */
+    private static String normalizeKoreanAddress(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        String s = raw.trim().replaceAll("\\s+", " ");
+        String[][] pairs = {
+                {"서울특별시", "서울"},
+                {"부산광역시", "부산"},
+                {"대구광역시", "대구"},
+                {"인천광역시", "인천"},
+                {"광주광역시", "광주"},
+                {"대전광역시", "대전"},
+                {"울산광역시", "울산"},
+                {"세종특별자치시", "세종"},
+                {"경기도", "경기"},
+                {"강원특별자치도", "강원"},
+                {"강원도", "강원"},
+                {"충청북도", "충북"},
+                {"충청남도", "충남"},
+                {"전북특별자치도", "전북"},
+                {"전라북도", "전북"},
+                {"전라남도", "전남"},
+                {"경상북도", "경북"},
+                {"경상남도", "경남"},
+                {"제주특별자치도", "제주"},
+                {"제주도", "제주"}
+        };
+        for (String[] pair : pairs) {
+            String full = pair[0];
+            String sh = pair[1];
+            s = s.replace(full + " " + sh + " ", full + " ");
+            if (s.equals(full + " " + sh)) {
+                s = full;
+            }
+            if (s.startsWith(sh + " ")) {
+                s = full + s.substring(sh.length());
+            } else if (s.equals(sh)) {
+                s = full;
+            }
+        }
+        return s.trim().replaceAll("\\s+", " ");
+    }
+
+    /** 주소에서 시/군/구 토큰 추출 */
+    private static String extractCityToken(String address) {
+        if (address == null || address.isBlank()) {
+            return "";
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("([가-힣]+(?:시|군|구))")
+                .matcher(address);
+        return m.find() ? m.group(1) : "";
     }
 
     private static List<Map<String, String>> parseCourseRouteSpots(String raw) {
@@ -376,7 +469,18 @@ public class HiddenGemServer {
         for (int i = 0; i < found.size() - 1; i++) {
             double[] a = found.get(i);
             double[] b = found.get(i + 1);
-            List<double[]> seg = naverDriving(clientId, clientSecret, a, b);
+            if (approxSame(a, b)) {
+                if (path.isEmpty()) {
+                    path.add(a);
+                }
+                continue;
+            }
+            List<double[]> seg;
+            try {
+                seg = naverDriving(clientId, clientSecret, a, b);
+            } catch (Exception e) {
+                seg = List.of();
+            }
             if (seg.isEmpty()) {
                 if (path.isEmpty()) {
                     path.add(a);
