@@ -1172,10 +1172,25 @@ async function loadThumbnails(gems) {
   }
 }
 
+/** 서버 전체 상세 JSON인지 (sessionStorage용 슬림 캐시와 구분) */
+function isFullPlaceDetail(data) {
+  return !!(data && data.found === true && Array.isArray(data.info));
+}
+
 async function fetchPlaceDetail(gem) {
   const key = gemKey(gem);
-  if (placeDetailCache.has(key)) {
-    return placeDetailCache.get(key);
+  const cached = placeDetailCache.get(key);
+  if (isFullPlaceDetail(cached)) {
+    return cached;
+  }
+  const contentId =
+    gem.contentId || gem.detail?.contentId || (cached && cached.contentId) || "";
+  if (contentId) {
+    const byCid = placeDetailCache.get("cid:" + contentId);
+    if (isFullPlaceDetail(byCid)) {
+      placeDetailCache.set(key, byCid);
+      return byCid;
+    }
   }
   if (placeDetailInflight.has(key)) {
     return placeDetailInflight.get(key);
@@ -1186,10 +1201,12 @@ async function fetchPlaceDetail(gem) {
       sido: gem.sido || "",
       gungu: gem.gungu || "",
     });
+    if (contentId) params.set("contentId", contentId);
     const res = await fetch(`/api/place-detail?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "상세 조회 실패");
     placeDetailCache.set(key, data);
+    if (data.contentId) placeDetailCache.set("cid:" + data.contentId, data);
     return data;
   })().finally(() => {
     placeDetailInflight.delete(key);
@@ -1200,7 +1217,7 @@ async function fetchPlaceDetail(gem) {
 
 async function prefetchPlaceDetails(gems) {
   if (!gems.length) return;
-  const queue = gems.filter((g) => !placeDetailCache.has(gemKey(g)));
+  const queue = gems.filter((g) => !isFullPlaceDetail(placeDetailCache.get(gemKey(g))));
   if (!queue.length) return;
 
   const worker = async () => {
@@ -1224,12 +1241,16 @@ function hydrateGemsFromServerPayload(gems) {
   for (const g of gems || []) {
     const key = gemKey(g);
     if (g.detail && typeof g.detail === "object") {
-      placeDetailCache.set(key, g.detail);
       if (g.detail.found && g.detail.image && !g.thumbnail) {
         g.thumbnail = g.detail.image;
       }
-      if (g.detail.contentId) {
-        placeDetailCache.set("cid:" + g.detail.contentId, g.detail);
+      if (g.detail.contentId) g.contentId = g.detail.contentId;
+      // sessionStorage 슬림 상세(overview/info 없음)는 목록용만 — 전체 캐시에 넣지 않음
+      if (isFullPlaceDetail(g.detail)) {
+        placeDetailCache.set(key, g.detail);
+        if (g.detail.contentId) {
+          placeDetailCache.set("cid:" + g.detail.contentId, g.detail);
+        }
       }
     }
   }
@@ -1238,7 +1259,7 @@ function hydrateGemsFromServerPayload(gems) {
 function gemsReadyForDisplay(gems) {
   return (gems || []).filter((g) => {
     if (!g.thumbnail) return false;
-    const detail = placeDetailCache.get(gemKey(g));
+    const detail = placeDetailCache.get(gemKey(g)) || g.detail;
     return !!(detail && detail.found === true);
   });
 }
@@ -1246,7 +1267,7 @@ function gemsReadyForDisplay(gems) {
 /** 표시 개수(need)만큼 상세가 모이면 중단 */
 async function prefetchPlaceDetailsUntil(gems, need) {
   if (!gems?.length || need <= 0) return;
-  const queue = gems.filter((g) => !placeDetailCache.has(gemKey(g)));
+  const queue = gems.filter((g) => !isFullPlaceDetail(placeDetailCache.get(gemKey(g))));
   if (!queue.length) return;
 
   const worker = async () => {
@@ -1368,7 +1389,7 @@ async function enrichGemsInBackground(gems, key) {
     if (ready.length) publishAiGemsForKey(key, ready);
   }
 
-  const queue = gems.filter((g) => !placeDetailCache.has(gemKey(g)));
+  const queue = gems.filter((g) => !isFullPlaceDetail(placeDetailCache.get(gemKey(g))));
   if (!queue.length) return;
 
   const worker = async () => {
@@ -1425,6 +1446,8 @@ function applyCachedAiGems(gems) {
     const q = document.getElementById("gemSearch")?.value?.trim();
     showAiEmpty(sidoSelect?.value || "", !!q);
   }
+  // 슬림 session/목록만 있으면 클릭이 버벅이므로, 표시 후 전체 상세를 백그라운드로 채움
+  prefetchPlaceDetails(gems).catch(() => {});
 }
 
 /** @param {{ force?: boolean }} [options] */
@@ -1482,7 +1505,7 @@ async function loadHiddenGems(options = {}) {
 
       let ready = gemsReadyForDisplay(gems);
       const needThumbs = gems.filter((g) => !g.thumbnail);
-      const needDetails = gems.filter((g) => !placeDetailCache.has(gemKey(g)));
+      const needDetails = gems.filter((g) => !isFullPlaceDetail(placeDetailCache.get(gemKey(g))));
       const needWork = needThumbs.length > 0 || needDetails.length > 0;
 
       if (ready.length) {
@@ -1618,7 +1641,7 @@ async function openPlaceDetail(gem) {
   const key = gemKey(gem);
   const cached = placeDetailCache.get(key);
 
-  if (cached) {
+  if (isFullPlaceDetail(cached)) {
     currentPlaceData = cached;
     await maybeTranslatePlace(gem, cached);
     renderPlaceDetail(gem, cached);
