@@ -1739,6 +1739,9 @@ async function openNearbyPlace(place) {
     domesticVisitors: 0,
     thumbnail: place.image || "",
   };
+  // 근처 카드로 바꿀 때마다 담기 대상도 같이 갱신 (이전 장소가 남는 버그 방지)
+  currentPlaceGem = gem;
+  currentPlaceData = null;
   if (!placeDialog.open) placeDialog.showModal();
   placeBody.innerHTML = `<div class="place-loading">${uiLang === "en" ? "Loading…" : "불러오는 중…"}</div>`;
   try {
@@ -1749,6 +1752,8 @@ async function openNearbyPlace(place) {
     const res = await fetch(`/api/place-detail?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "상세 조회 실패");
+    // 로딩 중 다른 근처를 또 눌렀으면 이 응답은 무시
+    if (currentPlaceGem !== gem) return;
     if (!data.found) {
       placeBody.innerHTML = `<div class="place-empty">${escapeHtml(
         data.message || (uiLang === "en" ? "Details not available." : "상세 정보가 없습니다.")
@@ -1756,9 +1761,14 @@ async function openNearbyPlace(place) {
       return;
     }
     placeDetailCache.set("cid:" + place.contentId, data);
+    currentPlaceData = data;
+    if (data.title) gem.resNm = data.title;
+    if (data.image) gem.thumbnail = data.image;
     await maybeTranslatePlace(gem, data);
+    if (currentPlaceGem !== gem) return;
     renderPlaceDetail(gem, data);
   } catch (e) {
+    if (currentPlaceGem !== gem) return;
     placeBody.innerHTML = `<div class="place-empty">${escapeHtml(e.message || "불러오지 못했습니다.")}</div>`;
   }
 }
@@ -2841,7 +2851,7 @@ function threadCardHtml(p, { showCategory = false } = {}) {
     ? `<p class="thread-place">${escapeHtml(addrLine)}</p>`
     : "";
   const media = p.imageUrl
-    ? `<div class="thread-media"><img src="${escapeHtml(p.imageUrl)}" alt="" loading="lazy" /></div>`
+    ? `<div class="thread-media"><img src="${escapeHtml(p.imageUrl)}" alt="" loading="lazy" onerror="this.closest('.thread-media')?.remove()" /></div>`
     : "";
   const cat = showCategory
     ? `<span class="thread-cat">${escapeHtml(categoryLabel(p.category))}</span>`
@@ -3147,7 +3157,7 @@ function renderDetail() {
   const p = currentDetail;
   if (!p) return;
   const img = p.imageUrl
-    ? `<div class="detail-image"><img src="${escapeHtml(p.imageUrl)}" alt="" loading="lazy" /></div>`
+    ? `<div class="detail-image"><img src="${escapeHtml(p.imageUrl)}" alt="" loading="lazy" onerror="this.closest('.detail-image')?.remove()" /></div>`
     : "";
   detailBody.innerHTML = `
     ${img}
