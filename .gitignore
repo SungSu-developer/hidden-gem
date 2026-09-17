@@ -1,6 +1,11 @@
-# secrets
+# secrets / local config
 db.properties
+db.properties.local
 web/config.json
+.env
+.env.*
+*.pem
+*.key
 
 # build / deps
 build/
@@ -8,13 +13,17 @@ lib/
 *.class
 *.jar
 
-# API dump / local outputs
+# runtime / local outputs
 out/
 uploads/
+*.log
+*.tmp
 
-# IDE / OS
+# IDE / OS / Cursor
 .vscode/
 .idea/
+.cursor/
 *.iml
 .DS_Store
 Thumbs.db
+desktop.ini
